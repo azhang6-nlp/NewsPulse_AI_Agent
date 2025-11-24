@@ -54,7 +54,7 @@ class NewsletterOutput(BaseModel):
     newsletter_title: str = Field(..., description="Short headline for the newsletter")
     date: str = Field(..., description="Publication date (YYYY-MM-DD), got from session state newsletter_date field")
     short_blurb: str = Field(..., description="One-sentence summary / lede")
-    executive_summary: List[SectionItem] = Field(..., description="Key ececutive summaries (heading & body)")
+    executive_summary: List[SectionItem] = Field(..., description="Key executive summaries (heading & body)")
     technical_highlights: List[SectionItem] = Field(..., description="Key technical highlights (heading & body)")
     business_implications: List[SectionItem] = Field(..., description="Key business/industry implications (heading & body)")
     citations: List[str] = Field(..., description="List of source URLs / short citations, got from url in the inputs of executive summary and business summary")
