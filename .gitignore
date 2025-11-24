@@ -1,0 +1,115 @@
+# ---------------------------------------
+# PYTHON BASICS
+# ---------------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+*.egg-info/
+*.egg
+dist/
+build/
+
+# ---------------------------------------
+# VIRTUAL ENVS (venv, uv, conda, etc.)
+# ---------------------------------------
+.venv/
+venv/
+env/
+.uv/
+uv.lock
+.venv/*
+.conda/
+conda-env/
+
+# ---------------------------------------
+# SECRET / CONFIG FILES
+# ---------------------------------------
+.env
+.env.*
+*.env
+secrets.toml
+credentials.json
+google_api_key.txt
+
+# ---------------------------------------
+# ADK RUNTIME / TRACE LOGS
+# ---------------------------------------
+adk_trace/
+adk_sessions/
+adk_logs/
+debug/
+debug_*/
+*.adklog
+
+# ---------------------------------------
+# NEWSLETTER DEBUG OUTPUT
+# ---------------------------------------
+debug_newsletters/
+newsletter_*.html
+
+# ---------------------------------------
+# VECTOR DB + SQLITE (Chroma / SQLite)
+# ---------------------------------------
+chroma/
+chroma.db/
+*.sqlite
+*.sqlite-journal
+*.db
+AI_Newsletter/chroma_store/
+*.sqlite3
+
+# ---------------------------------------
+# IDE / EDITOR FILES
+# ---------------------------------------
+.vscode/
+.idea/
+*.iml
+
+# ---------------------------------------
+# MACOS / SYSTEM JUNK
+# ---------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+
+# ---------------------------------------
+# JUPYTER NOTEBOOKS (optional)
+# ---------------------------------------
+.ipynb_checkpoints/
+*.ipynb
+
+# ---------------------------------------
+# LOGS
+# ---------------------------------------
+*.log
+logs/
+log/
+
+# ---------------------------------------
+# CACHE DIRECTORIES
+# ---------------------------------------
+.cache/
+pytest_cache/
+.mypy_cache/
+__snapshot__/
+
+# ---------------------------------------
+# OPTIONAL FRONTEND / WEB
+# ---------------------------------------
+node_modules/
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# ---------------------------------------
+# TEMP FILES
+# ---------------------------------------
+*.tmp
+*.temp
+*.swp
+*.swo
+
