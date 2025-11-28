@@ -112,4 +112,10 @@ yarn-error.log
 *.temp
 *.swp
 *.swo
+sessions/
+agent_state*
+session*
+new_env/
+newsletter*
+.DS_Store
 
