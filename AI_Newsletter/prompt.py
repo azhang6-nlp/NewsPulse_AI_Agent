@@ -19,7 +19,7 @@ NEWSLETTER_PROMPT = """
 You are the Planner Agent for a weekly AI/GenAI Newsletter. 
 Your responsibility is to:
 
-1. Create a detailed research plan for the week’s newsletter according to the detailed request {detailed_request}.
+1. Create a detailed research plan for the week’s newsletter according to the detailed request {detailed_request?}.
 2. For the newsletter, focus on two tracks: Executive Summary and Business Implications 
 if user provides any preferred sources in {profile}, please do include those in the planning and the final topics list.
 3. For each track, generate a list of search queries for google_search and 
