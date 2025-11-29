@@ -1,44 +1,72 @@
-import requests
-from google.adk.agents.callback_context import CallbackContext
-from google.adk.models import LlmResponse
+import json
+import logging
+import re
+import time
+import uuid
+from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 import requests
 from bs4 import BeautifulSoup, Comment
 import copy
-import json
-import re, time
-from typing import List, Dict, Tuple, Any
 from google.adk.agents.callback_context import CallbackContext
 
-# Common article container tags/classes/ids
+import sqlite3
+
+from google.adk.models import LlmResponse  # correct for your ADK version
+
+
+# ----------------------------
+#  HTML parsing / content utils
+# ----------------------------
+
 CONTENT_HINTS = [
     "article", "main", "content", "post", "entry", "body-content",
     "post-content", "article-body", "main-content", "StoryBodyCompanion",
-    "Section1", "RichText", "td-post-content"
+    "Section1", "RichText", "td-post-content",
 ]
 
-def format_output(
-    callback_context: CallbackContext,
-    llm_response: LlmResponse
-) -> LlmResponse:
-    # 1. Inspect or modify the response if needed
-    # (optional) For example, you could log or sanitize:
-    resp_text = ""
-    if llm_response.content and llm_response.content.parts:
-        resp_text = llm_response.content.parts[0].text
-        if resp_text:
-            if '```json' in resp_text:
-                try:
-                    results_json = json.loads(resp_text.split('```json')[-1].replace('```',''))
-                    llm_response.content.parts[0].text = json.dumps(results_json)
-                    json.dump(results_json,open(f'agent_state_{callback_context.agent_name}.json','w'))
-                except:
-                    with open(f"agent_state_{callback_context.agent_name}.txt", "w") as f:
-                        f.write(resp_text)
-            else:
-                with open(f"agent_state_{callback_context.agent_name}.txt", "w") as f:
-                    f.write(resp_text)
-    return llm_response
+
+
+def safe_json_loads(text: str) -> Any:
+    """
+    More lenient JSON loader:
+      - strips ```json fences
+      - fixes some unsafe backslashes
+      - strips control chars if first parse fails
+    """
+    text = text.strip()
+    text = re.sub(r"^```(json)?", "", text)
+    text = re.sub(r"```$", "", text)
+
+    text = re.sub(
+        r'\\(?!["\\/bfnrtu])',
+        r"\\\\",
+        text,
+    )
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print("Decode failed:", e)
+        print("Trying lenient mode...")
+
+    text = re.sub(r"[\x00-\x1F]+", "", text)
+    return json.loads(text)
+
+def save_state_after_agent_callback(callback_context: CallbackContext) -> None:
+    """Persist the current state to a JSON (or TXT) file for debugging."""
+    state_dict = callback_context.state.to_dict()
+    print(f"[save_state_after_agent_callback] Current session state keys: {state_dict.keys()}")
+
+    filename_base = f"agent_state_{callback_context.agent_name}"
+    try:
+        with open(f"{filename_base}.json", "w", encoding="utf-8") as f:
+            json.dump(state_dict, f, indent=2, ensure_ascii=False)
+    except Exception:
+        with open(f"{filename_base}.txt", "w", encoding="utf-8") as f:
+            f.write(str(state_dict))
+
 
 def update_agent_state_for_clarification(callback_context):
     if callback_context.state['request_clarification']:
@@ -50,46 +78,97 @@ def update_agent_state_for_clarification(callback_context):
                 n = min(len(questions), len(answers))
                 callback_context.state['formatted_questions'] = 'Based on your input, the updated request is: ' + callback_context.state['request_clarification'].get('detailed_request','')
             else:
-                callback_context.state['formatted_questions'] = [f'Question {q} \n ' for q in questions]
-    save_state_after_agent_callback(callback_context)
+                callback_context.state["formatted_questions"] = [
+                    f"Question {q}\n " for q in questions
+                ]
 
-# def 
-def update_agent_state_for_profile(callback_context):
-    profile = callback_context.state.get('profile',{})
-    if 'detailed_request' in profile:
-        callback_context.state["detailed_request"] = profile['detailed_request']
-        callback_context.state["email"] = profile['email']
+def update_agent_state_for_profile(callback_context: CallbackContext) -> None:
+    """
+    Normalize `state['profile']` to a dict and expose detailed_request in state.
+    This is used as an after_agent_callback for the profile agent.
+    """
+    profile_raw = callback_context.state.get("profile")
+    if profile_raw is None:
+        print("[profile_callback] No 'profile' key found in state")
+        return
+
+    if isinstance(profile_raw, dict):
+        profile_data = profile_raw
+    else:
+        try:
+            profile_data = safe_json_loads(profile_raw)
+        except Exception as e:
+            print(f"Error parsing JSON from profile_agent: {e}")
+            print(f"Raw output: {profile_raw}")
+            return
+
+    callback_context.state["profile"] = profile_data
+    callback_context.state["email"] = profile_data.get('email','example@example.com')
+    callback_context.state["detailed_request"] = profile_data.get(
+        "detailed_request", "No request found"
+    )
+
     init_db()
-    save_user_profile(profile)
+    save_user_profile(profile_data)
+    save_state_after_agent_callback(callback_context)
+
+def update_agent_state_for_recommender(callback_context: CallbackContext) -> None:
+    """
+    Normalize `state['profile']` to a dict and expose detailed_request in state.
+    This is used as an after_agent_callback for the profile agent.
+    """
+    refined_topics = callback_context.state.get("refined_topics")
+    if refined_topics is None:
+        print("[profile_callback] No 'refined_topics' key found in state")
+        return
+
+    if isinstance(refined_topics, dict):
+        updated_request = refined_topics.get('detailed_request_updated','')
+    else:
+        try:
+            updated_request = safe_json_loads(refined_topics).get('detailed_request_updated','')
+        except Exception as e:
+            print(f"Error parsing JSON from refined_topics: {e}")
+            print(f"Raw output: {refined_topics}")
+            return
+
+    callback_context.state["profile"]['detailed_request'] = updated_request
+    callback_context.state["detailed_request"] =updated_request
+
     save_state_after_agent_callback(callback_context)
 
 
-def save_state_after_agent_callback(callback_context):
-    state_dict = callback_context.state.to_dict()
-    print(f"[planner_before_agent_callback] Current session state: {state_dict.keys()}")
-    try:
-        with open(f'agent_state_{callback_context.agent_name}.json', "w") as f:
-            json.dump(state_dict, f, indent=2)
-    except:
-        with open(f"agent_state_{callback_context.agent_name}.txt", "w") as f:
-            f.write(str(state_dict))
+
+def update_agent_state_planner(callback_context: CallbackContext):
+    if callback_context.state['plan']:
+        callback_context.state["search_queries"] = callback_context.state['plan'].get('search_queries',[])
+        prompts = callback_context.state['plan'].get('task_delegation_plan',{})
+        callback_context.state['executive_summary_agent_prompt'] = prompts.get('executive_summary_agent','')
+        callback_context.state['section_outline'] = callback_context.state['plan'].get('section_outline',{})
+    
+    save_state_after_agent_callback(callback_context)
 
 
-def clean_text(txt):
-    # Collapse whitespace, remove artifacts
+# for fetch web pages
+
+def clean_text(txt: str) -> str:
+    """Collapse whitespace and trim."""
     return re.sub(r"\s+", " ", txt).strip()
 
-def extract_main_content(soup, page_title=None):
-    # 1. Remove scripts, styles, footers, headers, ads, nav, etc.
+
+def extract_main_content(soup: BeautifulSoup, page_title: str | None = None) -> str:
+    """Extract main article-like content from HTML soup."""
+    # Remove noisy tags/sections
     for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside"]):
         tag.decompose()
+
     for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
         comment.extract()
 
-    # 2. Try structural content extraction (containers that likely hold article text)
-    candidates = []
-
     body = soup.body or soup
+
+    # Try structural candidates first
+    candidates: List[Tuple[int, str]] = []
     for tag in body.find_all():
         id_class = " ".join((tag.get("id") or "").split() + (tag.get("class") or []))
         if any(hint.lower() in id_class.lower() for hint in CONTENT_HINTS):
@@ -98,41 +177,41 @@ def extract_main_content(soup, page_title=None):
                 candidates.append((len(txt), txt))
 
     if candidates:
-        candidates.sort(reverse=True)  # largest content first
-        return candidates[0][1]  # best match
+        candidates.sort(reverse=True)
+        return candidates[0][1]
 
-    # 3. Fallback: find the most text-dense block
-    blocks = []
+    # Fallback: text-dense blocks
+    blocks: List[Tuple[int, str]] = []
     for tag in body.find_all(["div", "section", "article", "p"]):
         txt = clean_text(tag.get_text(" ", strip=True))
-        if len(txt) > 200:  # discard small irrelevant blocks
+        if len(txt) > 200:
             blocks.append((len(txt), txt))
 
     if blocks:
         blocks.sort(reverse=True)
         best = blocks[0][1]
-        # Optional: keep only paragraphs relevant to title keywords
         if page_title:
             keywords = [w.lower() for w in page_title.split() if len(w) > 4]
             filtered = "\n".join(
-                p for p in best.split(". ")
-                if any(k in p.lower() for k in keywords)
+                p for p in best.split(". ") if any(k in p.lower() for k in keywords)
             )
             if len(filtered) > 0.3 * len(best):
                 return filtered
-
         return best
 
-    # 4. Last fallback: entire body text
     return clean_text(body.get_text(" ", strip=True))
 
 
-def fetch_page_details(pages: list[dict]) -> dict:
+def fetch_page_details(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Fetch detailed information for a list of web pages.
 
-    Given a list of page descriptors (each containing keys like
-    'topic', 'title', and 'url', 'uuid'), this function issues HTTP GET
+    Each `page` dict is expected to contain:
+      - topic
+      - title
+      - url
+      - uuid
+    this function issues HTTP GET
     requests to retrieve each page, then parses its HTML content to
     extract useful metadata.
 
@@ -140,7 +219,7 @@ def fetch_page_details(pages: list[dict]) -> dict:
 
       - topic: the topic/category associated with the page  
       - google_title: the title as returned by Google Search  
-      - url: the URL of the page  
+      - final_url: the final_url of the page  
       - uuid: unique identification passed from the input
       - page_title: the content of the HTML <title> tag (if available)  
       - summary: the first several paragraph text, trimmed of whitespace  
@@ -164,14 +243,13 @@ def fetch_page_details(pages: list[dict]) -> dict:
         None: All network or parsing errors are caught and encoded in the
         result list as error messages.
     """
-    
-    results = []
+    results: List[Dict[str, Any]] = []
 
     for page in pages:
-        topic = page.get('topic')
-        title = page.get('title')
-        url = page.get('url')
-        uuid = page.get('uuid')
+        topic = page.get("topic")
+        title = page.get("title")
+        url = page.get("url")
+        page_uuid = page.get("uuid")
 
         try:
             resp = requests.get(url, timeout=5)
@@ -179,13 +257,13 @@ def fetch_page_details(pages: list[dict]) -> dict:
             final_url = resp.url
         except:
             # unreachable
-            results.append({
-                "topic": topic,
-                "google_title": title,
-                "url": url,
-                "uuid": uuid,
-                "error": "Failed initial GET"
-            })
+            # results.append({
+            #     "topic": topic,
+            #     "google_title": title,
+            #     "url": url,
+            #     "uuid": uuid,
+            #     "error": "Failed initial GET"
+            # })
             continue
 
         try:
@@ -194,150 +272,95 @@ def fetch_page_details(pages: list[dict]) -> dict:
             html = resp.text
             soup = BeautifulSoup(html, "html.parser")
 
-            # Canonical URL
             canonical_tag = soup.find("link", rel="canonical")
-            canonical_url = canonical_tag["href"] if canonical_tag and canonical_tag.has_attr("href") else None
+            canonical_url = (
+                canonical_tag["href"]
+                if canonical_tag is not None and canonical_tag.has_attr("href")
+                else None
+            )
 
-            # Page <title>
             page_title = soup.title.string.strip() if soup.title else None
-
-            # 🔥 Extract main content (removes boilerplate)
             main_text = extract_main_content(soup, page_title=page_title)
-
-            # Summary (first ~1000 chars)
             summary = main_text[:1000]
 
-            results.append({
-                "topic": topic,
-                "google_title": title,
-                "url": url,
-                "uuid": uuid,
-                "final_url": final_url,
-                "canonical_url": canonical_url,
-                "page_title": page_title,
-                "summary": summary,
-                "full_text": main_text,
-            })
-
+            results.append(
+                {
+                    "topic": topic,
+                    "google_title": title,
+                    "url": url,
+                    "uuid": page_uuid,
+                    "final_url": final_url,
+                    "canonical_url": canonical_url,
+                    "page_title": page_title,
+                    "summary": summary,
+                    "full_text": main_text,
+                }
+            )
         except Exception as e:
             print(f"Error fetching content for {final_url}: {e}")
-            results.append({
-                "topic": topic,
-                "google_title": title,
-                "url": url,
-                "uuid": uuid,
-                "final_url": final_url,
-                "canonical_url": '',
-                "page_title": '',
-                "summary": '',
-                "full_text": '',
-                "error": str(e),
-            })
+            # results.append({
+            #     "topic": topic,
+            #     "google_title": title,
+            #     "url": url,
+            #     "uuid": uuid,
+            #     "final_url": final_url,
+            #     "canonical_url": '',
+            #     "page_title": '',
+            #     "summary": '',
+            #     "full_text": '',
+            #     "error": str(e),
+            # })
 
     return results
 
 
-def update_agent_state(callback_context: CallbackContext):
-    callback_context.state.get('search_queries_for_executive',[])
-    callback_context.state.get('search_queries_for_Industry_Implications',[])
-    callback_context.state.get('executive_summary_agent','')
-    callback_context.state.get('industry_implications_agent','')
-    callback_context.state.get('section_outline',{})
-    print(callback_context.state['plan'])
-    if callback_context.state['plan']:
-        # callback_context.state['plan'] = json.loads( callback_context.state['plan'].split('```json')[-1].replace('```','') )
-        callback_context.state["search_queries"] = callback_context.state['plan'].get('search_queries',[])
-        prompts = callback_context.state['plan'].get('task_delegation_plan',{})
-        callback_context.state['executive_summary_agent_prompt'] = prompts.get('executive_summary_agent','')
-        callback_context.state['section_outline'] = callback_context.state['plan'].get('section_outline',{})
-    profile = callback_context.state.get('profile',{})
-    if profile:
-        if type(profile) == str:
-            profile = json.loads(profile)
-        print(callback_context.state['profile'])
-        callback_context.state["detailed_request"] = profile['detailed_request']
-        callback_context.state["email"] = profile['email']
-
-    # state_dict = callback_context.state.to_dict()
-    # print(f"[after_model] Current session state: {state_dict.keys()}")
-
-    save_state_after_agent_callback(callback_context)
-
-def planner_before_agent_callback(callback_context):
+def planner_before_agent_callback(callback_context: CallbackContext) -> None:
     """
-    This runs before planner_agent executes. If requirement step is not done,
-    raise a controlled exception to prevent planner from running, or return
-    a short LlmResponse directing the agent runner not to proceed.
+    Guard before planner agent: ensure clarifications are done.
+    Raises RuntimeError to pause pipeline if requirement step not completed.
     """
-    # Check pipeline flags in state
     state_dict = callback_context.state.to_dict()
-    print(f"[planner_before_agent_callback] Current session state: {state_dict.keys()}")
-    clarifications = callback_context.state.get("request_clarification", {})
-    request_clarification_done = clarifications.get('request_clarification_done', False)
+    print(
+        f"[planner_before_agent_callback] Current session state: {state_dict.keys()}"
+    )
 
+    clarifications = callback_context.state.get("request_clarification", {})
+    request_clarification_done = clarifications.get("request_clarification_done", False)
 
     if not clarifications or not request_clarification_done:
-        # Prevent planner from running. Two common patterns:
-        # 1) raise an exception the runner will catch and stop the pipeline.
-        # 2) set a flag and return a sentinel response.
-
-        # Option A: raise to stop progression (make sure your runner catches it and stops)
         raise RuntimeError("Pipeline paused: requirement_agent needs clarifications")
-
-        # Option B: alternatively, set a state field and return a dummy LlmResponse
-        # (less standard; depends on ADK internals)
-    # else: planner proceeds
     else:
-        callback_context.state['detailed_request'] = clarifications.get('detailed_request', '')
-
-
-
+        callback_context.state["detailed_request"] = clarifications.get(
+            "detailed_request", ""
+        )
 
 def writer_before_agent_callback(callback_context):
     """
-    This runs before planner_agent executes. If requirement step is not done,
-    raise a controlled exception to prevent planner from running, or return
-    a short LlmResponse directing the agent runner not to proceed.
+    Guard before writer agent: ensure executive summary is done.
     """
-    # Check pipeline flags in state
     state_dict = callback_context.state.to_dict()
-    print(f"[planner_before_agent_callback] Current session state: {state_dict.keys()}")
+    print(
+        f"[writer_before_agent_callback] Current session state: {state_dict.keys()}"
+    )
+
     executive_summary = callback_context.state.get("executive_summary", {})
     executive_summary_done = executive_summary.get('summary_done', False)
-    # business_summary = callback_context.state.get("business_summary", {})
-    # business_summary_done = executive_summary.get('summary_done', False)
 
     if executive_summary_done:
-        print('Executive summary is done. Good for writing agent!')
+        print("Executive summary is done. Good for writing agent!")
     else:
-        # Option A: raise to stop progression (make sure your runner catches it and stops)
         raise RuntimeError("Pipeline paused: executive summary is still pending!")
 
 
-def safe_json_loads(text: str):
-    # Remove markdown fences
-    text = text.strip()
-    text = re.sub(r"^```(json)?", "", text)
-    text = re.sub(r"```$", "", text)
-    
-    # Fix invalid escape sequences by replacing single backslashes
-    # not used for valid JSON escapes (",\,/,b,f,n,r,t,u)
-    text = re.sub(
-        r'\\(?!["\\/bfnrtu])',
-        r'\\\\',
-        text
-    )
-    
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        print("Decode failed:", e)
-        print("Trying lenient mode...")
 
-    # secondary attempt: remove control characters
-    text = re.sub(r"[\x00-\x1F]+", "", text)
+def prepare_verify_pairs(callback_context: CallbackContext) -> None:
+    """Build (sentence, reference, uuid) pairs for verification."""
+    fetch_results_raw = callback_context.state.get("fetch_results_executive", "")
+    fetch_results = safe_json_loads(fetch_results_raw)
+    fetch_by_uuid = {item["uuid"]: item for item in fetch_results}
 
-    return json.loads(text)
+    news = callback_context.state.get("newsletter_result", {})
+    pairs: List[Dict[str, Any]] = []
 
 # utility.py
 def prepare_verify_pairs(callback_context):
@@ -392,90 +415,76 @@ def prepare_verify_pairs(callback_context):
     return None
 
 
-def after_agent_callback_save_md(callback_context):
+def after_agent_callback_save_md(callback_context: CallbackContext) -> None:
     """
-    - Parse model output (assumes model returns JSON matching NewsletterOutput)
-    - Save JSON to callback_context.state["newsletter_json"]
-    - Also write a human-friendly Markdown file newsletter_<session>_<ts>.md
-    - Overwrite llm_response text to the JSON string (so ADK UIs show structured output)
+    Build a Markdown newsletter from `state['newsletter_updated']`
+    and write it to disk, plus store the MD text in state.
     """
-    
     out = callback_context.state.get("newsletter_updated")
 
-    if isinstance(out, dict):
-        # Build Markdown
-        md_lines = []
-        md_lines.append(f"# {out['newsletter_title']}\n")
-        md_lines.append(f"*Date: {out.get('date')}*\n")
-        md_lines.append(f"**{out.get('short_blurb')}**\n")
+    if not isinstance(out, dict):
+        return
 
-        md_lines.append("## Executive Summary\n")
-        for item in out.get('executive_summary'):
-            md_lines.append(f"### {item.get('heading')}\n")
-            md_lines.append(item.get('body') + "\n")
+    md_lines: List[str] = []
 
-        md_lines.append("## Business & Industry Insights\n")
-        for item in out.get('business_implications'):
-            md_lines.append(f"### {item.get('heading')}\n")
-            md_lines.append(item.get('body') + "\n")
+    md_lines.append(f"# {out.get('newsletter_title', '')}\n")
+    md_lines.append(f"*Date: {out.get('date', '')}*\n")
+    md_lines.append(f"**{out.get('short_blurb', '')}**\n")
 
-        md_lines.append("## TL;DR\n")
-        md_lines.append(out.get('tl_dr') + "\n")
+    md_lines.append("## Executive Summary\n")
+    for item in out.get("executive_summary", []):
+        md_lines.append(f"### {item.get('heading', '')}\n")
+        md_lines.append((item.get("body") or "") + "\n")
 
-        md_lines.append("## Citations / Sources\n")
-        for c in out.get('citations'):
-            md_lines.append(f"- {c}")
+    md_lines.append("## Business & Industry Insights\n")
+    for item in out.get("business_implications", []):
+        md_lines.append(f"### {item.get('heading', '')}\n")
+        md_lines.append((item.get("body") or "") + "\n")
 
-        md_lines.append("\n## Call to Action\n")
-        md_lines.append(out.get('call_to_action') + "\n")
+    md_lines.append("## TL;DR\n")
+    md_lines.append((out.get("tl_dr") or "") + "\n")
 
-        md_text = "\n".join(md_lines)
+    md_lines.append("## Citations / Sources\n")
+    for c in out.get("citations", []):
+        md_lines.append(f"- {c}")
 
-        # Write to file named by session id and timestamp
-        try:
-            session_id = callback_context._invocation_context.session.id
-        except Exception:
-            session_id = "local"
-        ts = int(time.time())
-        filename = f"newsletter_{session_id}_{ts}.md"
-        try:
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(md_text)
-            callback_context.state["newsletter_md_path"] = filename
-        except Exception as e:
-            callback_context.state["newsletter_md_error"] = str(e)
+    md_lines.append("\n## Call to Action\n")
+    md_lines.append((out.get("call_to_action") or "") + "\n")
 
-        callback_context.state["newsletter_md_text"] = md_text
+    md_text = "\n".join(md_lines)
+
+    try:
+        session_id = callback_context._invocation_context.session.id
+    except Exception:
+        session_id = "local"
+
+    ts = int(time.time())
+    filename = f"newsletter_{session_id}_{ts}.md"
+
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(md_text)
+        callback_context.state["newsletter_md_path"] = filename
+    except Exception as e:
+        callback_context.state["newsletter_md_error"] = str(e)
+
+    callback_context.state["newsletter_md_text"] = md_text
 
 
-def apply_verification_updates(callback_context: CallbackContext,
-    section_keys_with_items: List[str] = None
-):
+def apply_verification_updates(
+    callback_context: CallbackContext,
+    section_keys_with_items: List[str] | None = None,
+) -> None:
     """
-    Replace inaccurate sentences in a newsletter dict using verification results.
-    Matching is done by (uuid, sentence) combination:
-      - For each verification entry where accuracy_or_not is False,
-        locate the newsletter section item with the same uuid and replace the
-        first exact occurrence of the sentence in that item's 'body' with the
-        provided 'modified_version'.
-
-    Args:
-      newsletter: newsletter dict (same shape you provided).
-      verifications: list of verification dicts, each with keys:
-          'sentence' (str), 'uuid' (str or id), 'accuracy_or_not' (bool),
-          'modified_version' (str)
-      section_keys_with_items: optional list of keys in newsletter that contain
-          list-of-dict items (defaults to common keys).
-
-    Returns:
-      (updated_newsletter, changes)
-        - updated_newsletter: deep-copied newsletter with replacements applied
-        - changes: list of dicts {uuid, original_sentence, modified_version, section_key, item_index, replaced}
+    Apply verification result to newsletter: replace inaccurate sentences
+    using 'modified_version' where accuracy_or_not is False.
     """
-    newsletter = callback_context.state.get('newsletter_result',{})
-    verification_result = callback_context.state.get('verification_result',{})
-    if 'VerificationOutput' in verification_result:
-        verifications = verification_result['VerificationOutput']
+    import copy as _copy
+
+    newsletter = callback_context.state.get("newsletter_result", {})
+    verification_result = callback_context.state.get("verification_result", {})
+
+    verifications = verification_result.get("VerificationOutput", [])
 
     if section_keys_with_items is None:
         section_keys_with_items = [
@@ -483,305 +492,324 @@ def apply_verification_updates(callback_context: CallbackContext,
             "business_implications",
         ]
 
-    updated = copy.deepcopy(newsletter)
-    changes = []
+    updated = _copy.deepcopy(newsletter)
+    changes: List[Dict[str, Any]] = []
 
-    # Build map uuid -> list of (section_key, index, item_ref) for fast lookup
-    uuid_index = {}
+    def replace_sentence_in_body(body: str, sentence: str, replacement: str) -> Tuple[str, bool]:
+        if not body or not sentence:
+            return body, False
+
+        if sentence in body:
+            return body.replace(sentence, replacement, 1), True
+
+        s_esc = re.escape(sentence.strip())
+        pattern = re.compile(r"(?<!\S)" + s_esc + r"(?!\S)", flags=re.MULTILINE)
+        m = pattern.search(body)
+        if m:
+            start, end = m.span()
+            return body[:start] + replacement + body[end:], True
+
+        return body, False
+
+    uuid_index: Dict[str, List[Tuple[str, int, Dict[str, Any]]]] = {}
     for key in section_keys_with_items:
         items = updated.get(key)
-        if not isinstance(items, list):
+        if not isinstance(items, List):
             continue
         for idx, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
-            u = item.get("uuid") or item.get("id") or item.get("doc_id") or item.get("uuid_str")
+            u = (
+                item.get("uuid")
+                or item.get("id")
+                or item.get("doc_id")
+                or item.get("uuid_str")
+            )
             if not u:
                 continue
             uuid_index.setdefault(str(u), []).append((key, idx, item))
 
-    # Helper to perform a safe single-sentence replacement in a larger body string
-    def replace_sentence_in_body(body: str, sentence: str, replacement: str) -> Tuple[str, bool]:
-        """
-        Replace the first exact match of 'sentence' inside 'body' with 'replacement'.
-        Returns (new_body, replaced_flag).
-        Uses a regex to find the sentence as a substring, allowing surrounding whitespace.
-        """
-        if not body or not sentence:
-            return body, False
-
-        # escape sentence for regex, but consider potential whitespace differences:
-        s_esc = re.escape(sentence.strip())
-        # look for the sentence followed by punctuation/space or end of string
-        pattern = re.compile(r"(?<!\S)" + s_esc + r"(?!\S)", flags=re.MULTILINE)
-        # Try simple literal replace first (fast)
-        if sentence in body:
-            new_body = body.replace(sentence, replacement, 1)
-            return new_body, True
-
-        # Fallback to regex search (less strict: match normalized whitespace)
-        m = pattern.search(body)
-        if m:
-            start, end = m.span()
-            new_body = body[:start] + replacement + body[end:]
-            return new_body, True
-
-        return body, False
-
-    # Process each verification entry
     for v in verifications:
         sentence = v.get("sentence")
-        uuid = v.get("uuid")
+        uid = v.get("uuid")
         accurate = v.get("accuracy_or_not", True)
         modified = v.get("modified_version", sentence)
 
-        if not sentence or uuid is None:
-            # skip entries that don't have both sentence and uuid
+        if not sentence or uid is None:
             continue
 
-        uid = str(uuid)
+        uid_str = str(uid)
         matched = False
 
-        # 1) Try to find by uuid in the prebuilt index
-        locations = uuid_index.get(uid, [])
-        for (section_key, idx, item) in locations:
-            body = item.get("body") or item.get("summary") or item.get("text") or ""
+        # 1) Try direct uuid index
+        for (section_key, idx, item) in uuid_index.get(uid_str, []):
+            body = (
+                item.get("body")
+                or item.get("summary")
+                or item.get("text")
+                or ""
+            )
             if not isinstance(body, str):
                 continue
+
             if not accurate:
                 new_body, replaced = replace_sentence_in_body(body, sentence, modified)
                 if replaced:
-                    # commit change into updated newsletter
-                    updated[section_key][idx]['body'] = new_body
-                    changes.append({
-                        "uuid": uid,
-                        "original_sentence": sentence,
-                        "modified_version": modified,
-                        "section_key": section_key,
-                        "item_index": idx,
-                        "replaced": True
-                    })
+                    updated[section_key][idx]["body"] = new_body
+                    changes.append(
+                        {
+                            "uuid": uid_str,
+                            "original_sentence": sentence,
+                            "modified_version": modified,
+                            "section_key": section_key,
+                            "item_index": idx,
+                            "replaced": True,
+                        }
+                    )
                     matched = True
-                    break  # stop searching other items with same uuid
-                else:
-                    # record attempted but not found in this item's body
-                    # (we may try other locations)
-                    continue
+                    break
             else:
-                # accurate -> no change, but record that we found matching location
                 if sentence in body:
-                    changes.append({
-                        "uuid": uid,
-                        "original_sentence": sentence,
-                        "modified_version": sentence,
-                        "section_key": section_key,
-                        "item_index": idx,
-                        "replaced": False,
-                        "note": "verified accurate; no change"
-                    })
+                    changes.append(
+                        {
+                            "uuid": uid_str,
+                            "original_sentence": sentence,
+                            "modified_version": sentence,
+                            "section_key": section_key,
+                            "item_index": idx,
+                            "replaced": False,
+                            "note": "verified accurate; no change",
+                        }
+                    )
                     matched = True
                     break
 
         if matched:
             continue
 
-        # 2) If not matched by uuid index, try scanning other likely places
-        # for items with same uuid in any list (fallback)
-        for key, items in updated.items():
-            if not isinstance(items, list):
-                continue
-            for idx, item in enumerate(items):
-                if not isinstance(item, dict):
-                    continue
-                u = item.get("uuid") or item.get("id") or item.get("doc_id") or item.get("uuid_str")
-                if str(u) != uid:
-                    continue
-                body = item.get("body") or item.get("summary") or item.get("text") or ""
-                if not isinstance(body, str):
-                    continue
-                if not accurate:
-                    new_body, replaced = replace_sentence_in_body(body, sentence, modified)
-                    if replaced:
-                        updated[key][idx]['body'] = new_body
-                        changes.append({
-                            "uuid": uid,
-                            "original_sentence": sentence,
-                            "modified_version": modified,
-                            "section_key": key,
-                            "item_index": idx,
-                            "replaced": True,
-                            "fallback": True
-                        })
-                        matched = True
-                        break
-            if matched:
-                break
-        if matched:
-            continue
-
-        # 3) Final fallback: replace anywhere in the entire newsletter (best-effort)
+        # 2) Fallback: search all sections
         if not accurate:
             replaced_any = False
             for key, val in updated.items():
-                # handle top-level string fields
                 if isinstance(val, str):
                     new_val, replaced = replace_sentence_in_body(val, sentence, modified)
                     if replaced:
                         updated[key] = new_val
                         replaced_any = True
-                        changes.append({
-                            "uuid": uid,
-                            "original_sentence": sentence,
-                            "modified_version": modified,
-                            "section_key": key,
-                            "item_index": None,
-                            "replaced": True,
-                            "fallback": "global"
-                        })
+                        changes.append(
+                            {
+                                "uuid": uid_str,
+                                "original_sentence": sentence,
+                                "modified_version": modified,
+                                "section_key": key,
+                                "item_index": None,
+                                "replaced": True,
+                                "fallback": "global",
+                            }
+                        )
                         break
-                # handle lists of strings
                 if isinstance(val, list):
                     for idx, elem in enumerate(val):
                         if isinstance(elem, str):
-                            new_elem, replaced = replace_sentence_in_body(elem, sentence, modified)
+                            new_elem, replaced = replace_sentence_in_body(
+                                elem, sentence, modified
+                            )
                             if replaced:
                                 updated[key][idx] = new_elem
                                 replaced_any = True
-                                changes.append({
-                                    "uuid": uid,
-                                    "original_sentence": sentence,
-                                    "modified_version": modified,
-                                    "section_key": key,
-                                    "item_index": idx,
-                                    "replaced": True,
-                                    "fallback": "global_list"
-                                })
-                                break
-                        elif isinstance(elem, dict):
-                            body = elem.get("body") or elem.get("summary") or elem.get("text")
-                            if isinstance(body, str):
-                                new_body, replaced = replace_sentence_in_body(body, sentence, modified)
-                                if replaced:
-                                    updated[key][idx]['body'] = new_body
-                                    replaced_any = True
-                                    changes.append({
-                                        "uuid": uid,
+                                changes.append(
+                                    {
+                                        "uuid": uid_str,
                                         "original_sentence": sentence,
                                         "modified_version": modified,
                                         "section_key": key,
                                         "item_index": idx,
                                         "replaced": True,
-                                        "fallback": "global_list_dict"
-                                    })
+                                        "fallback": "global_list",
+                                    }
+                                )
+                                break
+                        elif isinstance(elem, dict):
+                            body = (
+                                elem.get("body")
+                                or elem.get("summary")
+                                or elem.get("text")
+                            )
+                            if isinstance(body, str):
+                                new_body, replaced = replace_sentence_in_body(
+                                    body, sentence, modified
+                                )
+                                if replaced:
+                                    updated[key][idx]["body"] = new_body
+                                    replaced_any = True
+                                    changes.append(
+                                        {
+                                            "uuid": uid_str,
+                                            "original_sentence": sentence,
+                                            "modified_version": modified,
+                                            "section_key": key,
+                                            "item_index": idx,
+                                            "replaced": True,
+                                            "fallback": "global_list_dict",
+                                        }
+                                    )
                                     break
                     if replaced_any:
                         break
                 if replaced_any:
                     break
+
             if not replaced_any:
-                changes.append({
-                    "uuid": uid,
+                changes.append(
+                    {
+                        "uuid": uid_str,
+                        "original_sentence": sentence,
+                        "modified_version": modified,
+                        "section_key": None,
+                        "item_index": None,
+                        "replaced": False,
+                        "note": "could not find sentence to replace",
+                    }
+                )
+        else:
+            changes.append(
+                {
+                    "uuid": uid_str,
                     "original_sentence": sentence,
-                    "modified_version": modified,
+                    "modified_version": sentence,
                     "section_key": None,
                     "item_index": None,
                     "replaced": False,
-                    "note": "could not find sentence to replace"
-                })
-        else:
-            # accurate but not matched — record as unchecked/unmatched
-            changes.append({
-                "uuid": uid,
-                "original_sentence": sentence,
-                "modified_version": sentence,
-                "section_key": None,
-                "item_index": None,
-                "replaced": False,
-                "note": "accurate but not matched to any section"
-            })
-    callback_context.state['newsletter_updated'] = updated
-    callback_context.state['newsletter_changes'] = changes
+                    "note": "accurate but not matched to any section",
+                }
+            )
+
+    callback_context.state["newsletter_updated"] = updated
+    callback_context.state["newsletter_changes"] = changes
 
     after_agent_callback_save_md(callback_context)
     save_state_after_agent_callback(callback_context)
 
 
-def save_search_results(callback_context: CallbackContext):
-    search_results_executive = callback_context.state.get('search_results_executive','')
+def save_search_results(callback_context: CallbackContext) -> None:
+    """Persist search results into the DB using save_article_for_user."""
+    raw = callback_context.state.get("search_results_executive", "")
     try:
-        search_results = safe_json_loads(search_results_executive)
-    except:
+        search_results = safe_json_loads(raw)
+    except Exception:
         search_results = []
-    email = callback_context.state.get('email','')
+
+    email = callback_context.state.get("email", "")
     for article in search_results:
         save_article_for_user(email, article)
+
     save_state_after_agent_callback(callback_context)
 
 
-def create_uuid_for_search_results(callback_context: CallbackContext, llm_response: LlmResponse) -> LlmResponse:
+def create_uuid_for_search_results(
+    callback_context: CallbackContext | None = None,
+    llm_response: LlmResponse | None = None,
+    **kwargs: Any,
+) -> LlmResponse | None:
+    """
+    After-model callback for the search-results agent.
+
+    ADK calls this as:
+        create_uuid_for_search_results(callback_context=..., llm_response=...)
+
+    We:
+      - read the JSON text from the LLM response
+      - add a 'uuid' field to each item
+      - write it back into the response and into state["search_results_executive"]
+    """
+    if llm_response is None:
+        return None
 
     resp_text = ""
     if llm_response.content and llm_response.content.parts:
-        resp_text = llm_response.content.parts[0].text
+        resp_text = llm_response.content.parts[0].text or ""
 
-    parsed = None
+    if not resp_text.strip():
+        return llm_response
+
+    parsed: Any = None
     try:
-        # Agent should output JSON; parse it.
         parsed = safe_json_loads(resp_text)
     except Exception:
-        # Try to fall back to state if agent already wrote structured data there:
-        parsed = callback_context.state.get("search_results_executive")
+        if callback_context is not None:
+            parsed = callback_context.state.get("search_results_executive")
+
     if not parsed:
         return llm_response
-    import uuid
+
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        return llm_response
+
     for item in parsed:
-        item['uuid'] = str(uuid.uuid4())
-    llm_response.content.parts[0].text = json.dumps(parsed)
-    callback_context.state['search_results_executive'] = json.dumps(parsed)
+        if isinstance(item, dict):
+            item["uuid"] = str(uuid.uuid4())
+
+    new_text = json.dumps(parsed, ensure_ascii=False)
+
+    if llm_response.content and llm_response.content.parts:
+        llm_response.content.parts[0].text = new_text
+
+    if callback_context is not None:
+        callback_context.state["search_results_executive"] = new_text
+
     return llm_response
 
 
-import sqlite3
-import json
-from pathlib import Path
-from typing import Dict, Any, List
+# ----------------------------
+#  SQLite persistence for users/articles
+# ----------------------------
 
 DB_PATH = Path(__file__).parent / "ai_newsletter.db"
 
-def init_db():
+
+def init_db() -> None:
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    # user profiles
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        email TEXT PRIMARY KEY,
-        profile_json TEXT,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    """)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            email TEXT PRIMARY KEY,
+            profile_json TEXT,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+    )
 
-    # article index
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS article_index (
-        user_email TEXT,
-        article_id TEXT,
-        url TEXT,
-        published_at TEXT,
-        title TEXT,
-        summary TEXT,
-        PRIMARY KEY (user_email, article_id)
-    );
-    """)
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS article_index (
+            user_email TEXT,
+            article_id TEXT,
+            url TEXT,
+            published_at TEXT,
+            title TEXT,
+            summary TEXT,
+            PRIMARY KEY (user_email, article_id)
+        );
+        """
+    )
 
     conn.commit()
     conn.close()
     print("✅ SQLite initialized at:", DB_PATH)
 
-def get_db():
+init_db()
+
+
+def get_db() -> sqlite3.Connection:
     return sqlite3.connect(DB_PATH)
 
-# ---------------- User Profiles ----------------
+
+# ---------- User profiles ----------
+
 
 def load_user_profile(email: str) -> Dict[str, Any]:
     with get_db() as conn:
@@ -794,6 +822,7 @@ def load_user_profile(email: str) -> Dict[str, Any]:
         return json.loads(row[0])
     return {"email": email}
 
+
 def save_user_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
     email = profile.get("email")
     if not email:
@@ -804,7 +833,7 @@ def save_user_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
             """
             INSERT INTO users (email, profile_json)
             VALUES (?, ?)
-            ON CONFLICT(email) DO UPDATE SET 
+            ON CONFLICT(email) DO UPDATE SET
                 profile_json = excluded.profile_json,
                 updated_at = CURRENT_TIMESTAMP
             """,
@@ -812,7 +841,9 @@ def save_user_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
         )
     return {"ok": True}
 
-# ---------------- Article Index ----------------
+
+# ---------- Article index ----------
+
 
 def get_seen_article_ids(user_email: str) -> List[str]:
     with get_db() as conn:
@@ -821,6 +852,7 @@ def get_seen_article_ids(user_email: str) -> List[str]:
             (user_email,),
         )
         return [row[0] for row in cur.fetchall()]
+
 
 def save_article_for_user(user_email: str, article: Dict[str, Any]) -> None:
     with get_db() as conn:
