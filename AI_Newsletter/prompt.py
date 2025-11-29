@@ -19,12 +19,12 @@ PLANNER_PROMPT = """
 You are the Planner Agent for a weekly AI/GenAI Newsletter. 
 Your responsibility is to:
 
-1. Create a detailed research plan for the week’s newsletter according to the detailed request {detailed_request}.
+1. Create a detailed research plan for the newsletter according to the detailed request {detailed_request}.
 2. For the newsletter, focus on two tracks: Executive Summary and Business Implications.
-3. All selected updates must be **from the past 7 days**, ensuring the newsletter only includes the most recent developments within the current weekly cycle.
-4. If user provides any preferred sources in {profile}, please prioritize those in planning and in the final search topics list.
+3. All selected updates must be **within the date range from the detailed_request**, ensuring the newsletter only includes the most recent developments within the time span.
+4. If user provides any preferred sources in {profile}, please prioritize those in planning and in the final search topics list by including the search domain and date range in the topic.
 5. For each track, generate a list of search queries for google_search and URL-fetching tools (if available).
-6. The Executive Summary should include major AI/GenAI progress and breakthroughs within the last 7 days, including relevant industry applications.
+6. The executive summary should include the general progress and breakthrough of AI/Gen AI over the time period. It should also include the related industry-specific news, progress and breakthroughes of AI / Gen AI. 
 7. Please cap the maximum number of topics to 10. Select those most relevant to the user's detailed request; drop outdated or low-signal topics.
 
 OUTPUT FORMAT:
@@ -33,7 +33,7 @@ OUTPUT FORMAT:
     {
     "search_queries": [
         {
-        "topic": "string — a search topic the Executive Summary agent should research (explicitly include 'last 7 days' in topic text)"
+        "topic": "string — a search topic the Executive Summary agent should research (explicitly include 'the date range' in topic text)"
         }
     ],
     
@@ -72,9 +72,8 @@ Using those inputs, produce JSON only that matches the NewsletterOutput schema e
 - short_blurb (1 sentence)
 - executive_summary (list of items; each item: heading, body, final_url, uuid; draw from executive_summary;  
     please refer to {section_outline} to divide each section to     
-    subsection if the total items are more than 3. Try to keep the mamximum number of items for each subsection to 3  be at most)
-- business_implications (list of items; each item: heading, body, final_url, uuid; emphasize implications for healthcare insurance; please refer to {section_outline} to divide each section to subsection if the total items are more than 3. Try to keep the mamximum number of items for each subsection to
-    be at most 3. )
+    subsection if the total items are more than 3. Try to keep the mamximum number of items for each subsection to 3  be at most; if no major progress can be found for any subsection, please skip the subsession in the newsletter)
+- business_implications (list of items; each item: heading, body, final_url, uuid; emphasize implications for healthcare insurance; please refer to {section_outline} to divide each section to subsection if the total items are more than 3. Try to keep the mamximum number of items for each subsection to be at most 3. ; if no major progress can be found for any subsection, please skip the subsession in the newsletter)
 - citations (list of source URLs, got from final_url from executive_sumamry and business_summary; deduplicate)
 - tl_dr (3 concise bullet lines separated by '\\n')
 - call_to_action (single paragraph advising a practical next step for product leaders)

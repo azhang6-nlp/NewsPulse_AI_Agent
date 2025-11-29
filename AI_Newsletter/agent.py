@@ -52,7 +52,7 @@ newsletter_writing_verifcation_pipeline_agent = LoopAgent(
         NewsletterWriter,
         verification_agent,
     ],
-    max_iterations=3,   # safety cap
+    max_iterations=2,   # safety cap
 )
 
 # --- 4. Root Agent (Full Pipeline) ---
