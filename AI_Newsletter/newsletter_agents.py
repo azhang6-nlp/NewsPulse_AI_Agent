@@ -1,20 +1,24 @@
 from google.adk.agents import LlmAgent
 from google.adk.tools import google_search
+from google.adk.tools.tool_context import ToolContext
 
-from .utility import (save_state_after_agent_callback, 
-                      update_agent_state_for_clarification,
-                      update_agent_state_for_profile,
-                    #   before_agent_callback_clarification,
-                      fetch_page_details, 
-                      update_agent_state,
-                      planner_before_agent_callback,
-                      writer_before_agent_callback,
-                      prepare_verify_pairs,
-                      apply_verification_updates,
-                      save_user_profile,
-                      save_search_results,
-                      create_uuid_for_search_results
-                      )
+
+from .utility import (
+    save_state_after_agent_callback, 
+    update_agent_state_for_clarification,
+    update_agent_state_for_profile,
+    fetch_page_details, 
+    update_agent_state,
+    planner_before_agent_callback,
+    writer_before_agent_callback,
+    prepare_verify_pairs,
+    apply_verification_updates,
+    save_user_profile,
+    save_search_results,
+    create_uuid_for_search_results,
+    writer_before_agent_callback, 
+    writer_after_agent_callback
+)
 from .schema import SummaryOutput, NewsletterSections, clarifications_needed, NewsletterOutput, NewsletterProfileOutput, VerificationOutput
 from .prompt import NEWSLETTER_PROMPT
 
@@ -94,21 +98,42 @@ planner_agent = LlmAgent(
 
 executive_search_agent = LlmAgent(
     name="executive_search_agent",
-    model=MODEL,  # or your Gemini-2 model
-    instruction=""" You have the below request from user: 
+    model=MODEL,
+    instruction="""
+        You have the below request from user: 
         {detailed_request}
-        You are a search assistant, the first step of the executive summary agent. For each topic below, perform a Google Search (using the google_search tool) 
-        to have up to **1** relevant search results. Then, return a JSON array where each item include:
-            - topic: the topic string (please do include the date range in the topic)
+
+        You are a search assistant, the first step of the executive summary agent.
+
+        GOAL:
+        For each topic below, find at most **1** highly relevant result
+        from the **last 7 days only**.
+
+        HOW TO USE google_search:
+        - When you call the `google_search` tool, always:
+          - Use the topic string as the query.
+          - Constrain results to the last 7 days (for example by using a
+            recency / date filter such as `recency_days: 7` if the tool supports it,
+            or by adding suitable time filters to the query like "past 7 days").
+        - After you get search results, infer `publish_date` from the page
+          (snippet or content), and **discard** any result older than 7 days.
+
+        For each topic, return a JSON array where each item includes:
+            - topic: the topic string (include the time window, e.g. "LLM safety updates (last 7 days)")
             - title: the title or snippet of the result  
             - url: the URL of the result  
-            - publish_date: the publish date infurred from the page
+            - publish_date: the publish date inferred from the page (ISO if possible)
             - uuid: unique identification for each result
-            - short_summary: summary of the web page
+            - short_summary: a short summary of the web page
 
         Here are the topics to search:
         {search_queries}
-        Make sure your output is **valid JSON only** (no extra commentary, only keep those within the date range of interest).
+
+        OUTPUT RULES:
+        - If no suitable result was found in the last 7 days for a topic,
+          omit that topic or set url to null and short_summary to "".
+        - Make sure your output is **valid JSON only** (no extra commentary),
+          and **only keep results within the last 7 days**.
         """,
     tools=[google_search],
     output_key="search_results_executive",
@@ -187,6 +212,14 @@ executive_summary_agent = LlmAgent(
 
 # MODEL = "gemini-2.5-flash"  # adapt if you want a different model
 
+def exit_loop(tool_context: ToolContext):
+    """
+    Signal to the LoopAgent that verification is complete and
+    we can stop iterating. This is used as a tool by Newsletter_Verifier.
+    """
+    tool_context.actions.escalate = True
+    return {"status": "loop_ended"}
+
 # -------------------------
 # The Agent: instruction & wiring
 # -------------------------
@@ -221,6 +254,19 @@ REQUIREMENTS:
 6. When synthesizing, prefer facts and avoid hallucination; if a fact is only in one summary, mark it as "reported by source".
 """
 
+# NewsletterWriter = LlmAgent(
+#     name="NewsletterWriter",
+#     model=MODEL,
+#     instruction=INSTRUCTION,
+#     output_key="newsletter_result",
+#     output_schema=NewsletterOutput,
+#     # disallow_transfer_to_parent=True,
+#     # disallow_transfer_to_peers=True,
+#     before_agent_callback=writer_before_agent_callback,
+#     after_agent_callback=save_state_after_agent_callback # prepare_verify_pairs
+# )
+from .utility import writer_before_agent_callback, writer_after_agent_callback
+
 NewsletterWriter = LlmAgent(
     name="NewsletterWriter",
     model=MODEL,
@@ -230,19 +276,47 @@ NewsletterWriter = LlmAgent(
     # disallow_transfer_to_parent=True,
     # disallow_transfer_to_peers=True,
     before_agent_callback=writer_before_agent_callback,
-    after_agent_callback=save_state_after_agent_callback # prepare_verify_pairs
+    after_agent_callback=writer_after_agent_callback,
 )
+
 
 verification_agent = LlmAgent(
     name="Newsletter_Verifier",
     model=MODEL,
     instruction="""
-You are a precise verification assistant. You will be given a list of sentences and, reference from the source documents. You will verify each sentence against the provided source excerpts.\nFor each sentence, return a JSON object with keys: sentence, accuracy_or_not (true/false), modified_version (if false, a conservative correction grounded solely in the provided excerpts), and your justification.\nDo NOT hallucinate or access external pages. Only use the reference to verify sentences.
-    {verification_pairs}
-OUTPUT FORMAT: JSON array ONLY with on extra text: [{"sentence":"...","uuid": the sentence identifier, "accuracy_or_not": true|false, "modified_version":"...","justification":"reasons for the accuracy or inaccuracy"}]'
+You are a precise verification assistant. You will be given a list of sentences and references from the source documents.
+
+For each sentence:
+- Output an object with:
+  - sentence (string)
+  - uuid (string)
+  - accuracy_or_not (true/false)
+  - modified_version (string)
+  - justification (string)
+
+Rules for `modified_version`:
+- If accuracy_or_not is true and no change is needed, set modified_version to be EXACTLY the original sentence.
+- If accuracy_or_not is false, set modified_version to a conservative corrected version.
+- Never use null for modified_version; always return a string.
+
+Input:
+{verification_pairs}
+
+OUTPUT FORMAT:
+JSON array ONLY, e.g.:
+[
+  {
+    "sentence": "...",
+    "uuid": "...",
+    "accuracy_or_not": true,
+    "modified_version": "...",  // original or corrected sentence
+    "justification": "..."
+  }
+]
     """,
     output_key="verification_result",
     before_agent_callback=prepare_verify_pairs,
     after_agent_callback=apply_verification_updates,
-    output_schema = VerificationOutput
+    output_schema=VerificationOutput,
+    tools=[exit_loop],
 )

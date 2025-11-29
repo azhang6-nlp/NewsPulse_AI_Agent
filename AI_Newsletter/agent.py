@@ -1,14 +1,15 @@
-from google.adk.agents import SequentialAgent, ParallelAgent
+from google.adk.agents import SequentialAgent, ParallelAgent, LoopAgent
+from google.adk.tools.tool_context import ToolContext
 
-from .newsletter_agents import (profile_agent,
-                                planner_agent,
-                                executive_search_agent,
-                                executive_fetch_agent,
-                                executive_summary_agent,
-                                NewsletterWriter,
-                                verification_agent)
-
-
+from .newsletter_agents import (
+    profile_agent,
+    planner_agent,
+    executive_search_agent,
+    executive_fetch_agent,
+    executive_summary_agent,
+    NewsletterWriter,
+    verification_agent,
+)
 planning_pipeline = SequentialAgent(
     name="planning_pipeline",
     sub_agents=[
@@ -27,12 +28,13 @@ summary_pipeline_agent = SequentialAgent(
 )
 
 
-newsletter_writing_verifcation_pipeline_agent = SequentialAgent(
+newsletter_writing_verifcation_pipeline_agent = LoopAgent(
     name="newsletter_writing_verifcation_pipeline",
     sub_agents=[
-                NewsletterWriter,
-                verification_agent
-                ],
+        NewsletterWriter,
+        verification_agent,
+    ],
+    max_iterations=3,   # safety cap
 )
 
 root_agent = SequentialAgent(

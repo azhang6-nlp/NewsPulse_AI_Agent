@@ -4,9 +4,11 @@ from google.adk.models import LlmResponse
 
 import requests
 from bs4 import BeautifulSoup, Comment
+import copy
 import json
 import re, time
-from typing import List
+from typing import List, Dict, Tuple, Any
+from google.adk.agents.callback_context import CallbackContext
 
 # Common article container tags/classes/ids
 CONTENT_HINTS = [
@@ -337,25 +339,58 @@ def safe_json_loads(text: str):
 
     return json.loads(text)
 
-def prepare_verify_pairs(callback_context: CallbackContext):
-    fetch_results = callback_context.state.get('fetch_results_executive','')
-    fetch_results = safe_json_loads(fetch_results)
-    fetch_uuid = {item['uuid']:item for item  in fetch_results}
-    news = callback_context.state.get('newsletter_result')
-    pairs = []
-    for section in ['executive_summary','business_implications']:
-        res = news.get(section,{})
-        for item in res:
-            uuid = item['uuid']
-            full_text = fetch_uuid[uuid].get('full_text','')
-            pairs.append({'sentence': item['body'], 'reference': full_text, 'uuid': uuid})
-    callback_context.state['verification_pairs'] = pairs
-    save_state_after_agent_callback(callback_context)
-    # return True
+# utility.py
+def prepare_verify_pairs(callback_context):
+    state = callback_context.state
 
-import copy
-import re
-from typing import List, Dict, Tuple, Any
+    newsletter = state.get("newsletter_result") or {}
+    exec_summary = state.get("executive_summary") or {}
+
+    # Adjust to your actual schemas
+    # Assume newsletter_result["executive_summary"] is a list of items
+    # and exec_summary["items"] (or similar) is the list of article summaries.
+
+    newsletter_items = newsletter.get("executive_summary", []) or []
+    source_items = exec_summary.get("items", []) or exec_summary or []
+
+    # Build a simple uuid -> summary text mapping
+    source_by_uuid = {}
+    if isinstance(source_items, list):
+        for s in source_items:
+            if isinstance(s, dict):
+                uid = str(s.get("uuid") or "")
+                if uid:
+                    # choose the key that holds the dense summary
+                    source_by_uuid[uid] = s.get("summary") or ""
+
+    verification_pairs = []
+
+    for item in newsletter_items:
+        if not isinstance(item, dict):
+            continue
+        uuid = str(item.get("uuid") or "")
+        sentence = item.get("body") or item.get("heading") or ""
+        if not uuid or not sentence:
+            continue
+
+        reference = source_by_uuid.get(uuid, "")
+        if not reference:
+            # fallback to body itself if we have nothing
+            reference = item.get("body", "")
+        if not reference:
+            continue
+
+        verification_pairs.append(
+            {
+                "uuid": uuid,
+                "sentence": sentence,
+                "reference": reference,
+            }
+        )
+
+    state["verification_pairs"] = verification_pairs
+    return None
+
 
 def after_agent_callback_save_md(callback_context):
     """
@@ -804,3 +839,56 @@ def save_article_for_user(user_email: str, article: Dict[str, Any]) -> None:
                 article.get("short_summary", None),
             ),
         )
+
+def writer_before_agent_callback(callback_context: CallbackContext):
+    """
+    Called before NewsletterWriter runs.
+    - Increments loop iteration
+    - Stashes start_time for latency measurement
+    """
+    state = callback_context.state
+
+    # Track loop iteration (used by LoopAgent logic / verifier)
+    state["loop_iteration"] = int(state.get("loop_iteration", 0)) + 1
+
+    metrics = state.setdefault("metrics", {})
+    writer_metrics = metrics.setdefault("NewsletterWriter", {})
+
+    writer_metrics["iteration"] = state["loop_iteration"]
+    writer_metrics["start_time"] = time.time()
+
+
+def writer_after_agent_callback(callback_context: CallbackContext):
+    """
+    Called after NewsletterWriter runs.
+    - Computes latency
+    - Optionally captures token usage (if available)
+    - Then delegates to save_state_after_agent_callback to persist state
+    """
+    from .utility import save_state_after_agent_callback  # if not in same file, adjust import
+
+    state = callback_context.state
+    metrics = state.setdefault("metrics", {})
+    writer_metrics = metrics.setdefault("NewsletterWriter", {})
+
+    end_time = time.time()
+    start_time = writer_metrics.get("start_time")
+    if start_time is not None:
+        writer_metrics["latency_sec"] = end_time - start_time
+
+    # Optional: try to grab token usage from the response if ADK exposes it
+    resp = getattr(callback_context, "response", None)
+    usage = getattr(resp, "usage_metadata", None) if resp is not None else None
+    if usage is not None:
+        # adjust these attribute names if your ADK version differs
+        prompt_tokens = getattr(usage, "prompt_token_count", None)
+        output_tokens = getattr(usage, "candidates_token_count", None)
+
+        if prompt_tokens is not None:
+            writer_metrics["prompt_tokens"] = prompt_tokens
+        if output_tokens is not None:
+            writer_metrics["output_tokens"] = output_tokens
+            writer_metrics["total_tokens"] = (prompt_tokens or 0) + output_tokens
+
+    # Finally, do what you were already doing: save state
+    save_state_after_agent_callback(callback_context)
