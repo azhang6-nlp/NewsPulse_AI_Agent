@@ -25,54 +25,27 @@ CONTENT_HINTS = [
     "Section1", "RichText", "td-post-content",
 ]
 
-
-def format_output(
-    callback_context: CallbackContext,
-    llm_response: LlmResponse,
-) -> LlmResponse:
-    """Generic after_model callback that saves raw model output to files."""
-    resp_text = ""
-    if llm_response.content and llm_response.content.parts:
-        resp_text = llm_response.content.parts[0].text
-
-    if resp_text:
-        filename_base = f"agent_state_{callback_context.agent_name}"
-        if "```json" in resp_text:
-            try:
-                json_part = resp_text.split("```json", 1)[-1].replace("```", "")
-                results_json = json.loads(json_part)
-                llm_response.content.parts[0].text = json.dumps(results_json)
-                with open(f"{filename_base}.json", "w", encoding="utf-8") as f:
-                    json.dump(results_json, f, indent=2, ensure_ascii=False)
-            except Exception:
-                with open(f"{filename_base}.txt", "w", encoding="utf-8") as f:
-                    f.write(resp_text)
-        else:
-            with open(f"{filename_base}.txt", "w", encoding="utf-8") as f:
-                f.write(resp_text)
-
-    return llm_response
-
-
-def update_agent_state_for_clarification(callback_context: CallbackContext) -> None:
-    """Update state for clarification questions and save state."""
-    rc = callback_context.state.get("request_clarification")
-    if rc:
-        clarifications_needed = rc.get("clarifications_needed", [])
-        questions = [item["question"] for item in clarifications_needed]
-        answers = [item["answer"] for item in clarifications_needed if len(item["answer"]) > 1]
-
-        if questions:
-            if answers:
-                callback_context.state["formatted_questions"] = (
-                    "Based on your input, the updated request is: "
-                    + rc.get("detailed_request", "")
-                )
+def update_agent_state_for_clarification(callback_context):
+    if callback_context.state['request_clarification']:
+        clarifications_needed = callback_context.state['request_clarification'].get('clarifications_needed',[])
+        questions = [item['question'] for item in clarifications_needed]
+        answers = [item['answer'] for item in clarifications_needed if len(item['answer'])>1 ]
+        if len(questions) > 0:
+            if len(answers) >0:
+                n = min(len(questions), len(answers))
+                callback_context.state['formatted_questions'] = 'Based on your input, the updated request is: ' + callback_context.state['request_clarification'].get('detailed_request','')
             else:
                 callback_context.state["formatted_questions"] = [
                     f"Question {q}\n " for q in questions
                 ]
 
+def update_agent_state_for_profile(callback_context):
+    profile = callback_context.state.get('profile',{})
+    if 'detailed_request' in profile:
+        callback_context.state["detailed_request"] = profile['detailed_request']
+        callback_context.state["email"] = profile['email']
+    init_db()
+    save_user_profile(profile)
     save_state_after_agent_callback(callback_context)
 
 
@@ -176,6 +149,37 @@ def fetch_page_details(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
       - title
       - url
       - uuid
+    this function issues HTTP GET
+    requests to retrieve each page, then parses its HTML content to
+    extract useful metadata.
+
+    Returns a dictionary with the value having a list of dictionaries, each containing:
+
+      - topic: the topic/category associated with the page  
+      - google_title: the title as returned by Google Search  
+      - final_url: the final_url of the page  
+      - uuid: unique identification passed from the input
+      - page_title: the content of the HTML <title> tag (if available)  
+      - summary: the first several paragraph text, trimmed of whitespace  
+      - full_text: the entire visible textual content of the page  
+
+    In case of an error fetching or parsing a page, the dictionary will
+    include an 'error' field with an error message.
+
+    Args:
+        pages (list[dict]): A list of dictionaries, each describing a page.
+            Expected keys:
+              - 'topic' (str): The topic associated with this page.
+              - 'title' (str): The title from Google search.
+              - 'url' (str): The URL of the page.
+              - 'uuid' (str): The unique identification of the page
+
+    Returns:
+        Dict[str, str in json format].
+
+    Raises:
+        None: All network or parsing errors are caught and encoded in the
+        result list as error messages.
     """
     results: List[Dict[str, Any]] = []
 
@@ -189,16 +193,15 @@ def fetch_page_details(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             resp = requests.get(url, timeout=5)
             resp.raise_for_status()
             final_url = resp.url
-        except Exception:
-            results.append(
-                {
-                    "topic": topic,
-                    "google_title": title,
-                    "url": url,
-                    "uuid": page_uuid,
-                    "error": "Failed initial GET",
-                }
-            )
+        except:
+            # unreachable
+            # results.append({
+            #     "topic": topic,
+            #     "google_title": title,
+            #     "url": url,
+            #     "uuid": uuid,
+            #     "error": "Failed initial GET"
+            # })
             continue
 
         try:
@@ -233,20 +236,18 @@ def fetch_page_details(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             )
         except Exception as e:
             print(f"Error fetching content for {final_url}: {e}")
-            results.append(
-                {
-                    "topic": topic,
-                    "google_title": title,
-                    "url": url,
-                    "uuid": page_uuid,
-                    "final_url": final_url,
-                    "canonical_url": "",
-                    "page_title": "",
-                    "summary": "",
-                    "full_text": "",
-                    "error": str(e),
-                }
-            )
+            # results.append({
+            #     "topic": topic,
+            #     "google_title": title,
+            #     "url": url,
+            #     "uuid": uuid,
+            #     "final_url": final_url,
+            #     "canonical_url": '',
+            #     "page_title": '',
+            #     "summary": '',
+            #     "full_text": '',
+            #     "error": str(e),
+            # })
 
     return results
 
@@ -292,6 +293,22 @@ def update_agent_state(callback_context: CallbackContext):
             callback_context.state[key] = ""
 
     return None
+    if callback_context.state['plan']:
+        callback_context.state["search_queries"] = callback_context.state['plan'].get('search_queries',[])
+        prompts = callback_context.state['plan'].get('task_delegation_plan',{})
+        callback_context.state['executive_summary_agent_prompt'] = prompts.get('executive_summary_agent','')
+        callback_context.state['section_outline'] = callback_context.state['plan'].get('section_outline',{})
+    
+    profile = callback_context.state.get('profile',{})
+    if profile:
+        if type(profile) == str:
+            profile = json.loads(profile)
+        print(callback_context.state['profile'])
+        callback_context.state["detailed_request"] = profile['detailed_request']
+        callback_context.state["email"] = profile['email']
+
+    # state_dict = callback_context.state.to_dict()
+    # print(f"[after_model] Current session state: {state_dict.keys()}")
 
 
 
@@ -317,6 +334,10 @@ def planner_before_agent_callback(callback_context: CallbackContext) -> None:
 
 
 def writer_before_agent_callback(callback_context: CallbackContext) -> None:
+        callback_context.state['detailed_request'] = clarifications.get('detailed_request', '')
+
+
+def writer_before_agent_callback(callback_context):
     """
     Guard before writer agent: ensure executive summary is done.
     """
@@ -326,7 +347,7 @@ def writer_before_agent_callback(callback_context: CallbackContext) -> None:
     )
 
     executive_summary = callback_context.state.get("executive_summary", {})
-    executive_summary_done = executive_summary.get("summary_done", False)
+    executive_summary_done = executive_summary.get('summary_done', False)
 
     if executive_summary_done:
         print("Executive summary is done. Good for writing agent!")
@@ -860,3 +881,313 @@ def parse_feedback(raw_feedback: str) -> Dict[str, Any]:
     """Placeholder: parse free-form feedback into structured updates."""
     print(f"STUB: Parsing raw feedback: {raw_feedback}")
     return {}
+def convert_newsletter_json_to_html(data: dict) -> str:
+    """
+    Convert the summarized newsletter JSON into a full HTML email.
+    All URLs in sections are replaced with a “Read More” hyperlink.
+    """
+
+    def section_list_to_html(sections):
+        html = ""
+        for sec in sections:
+            read_more = f'<p><a href="{sec["final_url"]}" target="_blank">Read More →</a></p>'
+            html += f"""
+            <div style="margin-bottom: 28px;">
+                <h3 style="margin: 0 0 8px 0; color: #0d6efd; font-size: 20px;">
+                    {sec['heading']}
+                </h3>
+                <p style="margin: 0 0 8px 0; line-height: 1.55;">
+                    {sec['body']}
+                </p>
+                {read_more}
+            </div>
+            """
+        return html
+
+    executive_html = section_list_to_html(data.get("executive_summary",[]))
+    business_html = section_list_to_html(data.get("business_implications",[]))
+
+    citations_html = "".join(
+        f'<li><a href="{c}" target="_blank">{c}</a></li>' for c in data.get("citations",[])
+    )
+
+    return f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; background: #f7f7f7; padding: 20px;">
+        <table style="max-width: 700px; margin: auto; background: white; padding: 32px; border-radius: 12px;">
+            <tr>
+                <td>
+
+                    <h1 style="font-size: 28px; margin-bottom: 4px;">
+                        {data['newsletter_title']}
+                    </h1>
+                    <p style="color: gray; margin-top: 0;">{data['date']}</p>
+
+                    <p style="font-size: 17px; line-height: 1.6;">
+                        {data['short_blurb']}
+                    </p>
+
+                    <hr style="margin: 28px 0;" />
+
+                    <h2 style="font-size: 24px; margin-bottom: 16px;">Executive Summary</h2>
+                    {executive_html}
+
+                    <hr style="margin: 28px 0;" />
+
+                    <h2 style="font-size: 24px; margin-bottom: 16px;">Business Implications</h2>
+                    {business_html}
+
+                    <hr style="margin: 28px 0;" />
+
+                    <h2 style="font-size: 24px; margin-bottom: 16px;">Citations</h2>
+                    <ul style="line-height: 1.6; padding-left: 20px;">
+                        {citations_html}
+                    </ul>
+
+                    <hr style="margin: 28px 0;" />
+
+                    <h2 style="font-size: 24px; margin-bottom: 16px;">TL;DR</h2>
+                    <p style="white-space: pre-line; line-height: 1.55;">
+                        {data['tl_dr']}
+                    </p>
+
+                    <hr style="margin: 28px 0;" />
+
+                    <h2 style="font-size: 24px; margin-bottom: 16px;">Call to Action</h2>
+                    <p style="line-height: 1.55;">
+                        {data.get('call_to_action','')}
+                    </p>
+
+                </td>
+            </tr>
+        </table>
+    </body>
+    </html>
+    """
+
+import os
+import smtplib
+from pathlib import Path
+from datetime import datetime
+from email.message import EmailMessage
+import unicodedata
+import logging
+
+logger = logging.getLogger(__name__)
+
+def _sanitize_html_for_email(html: str) -> str:
+    """
+    Normalize and sanitize HTML so common unicode issues (NBSP, weird control chars)
+    don't break ASCII-only fallbacks or legacy send paths.
+    """
+    if html is None:
+        return ""
+    # Normalize to composed form
+    html = unicodedata.normalize("NFC", html)
+    # Replace common problematic characters: NBSP -> normal space
+    html = html.replace("\u00A0", " ")
+    # Optionally strip other non-printable controls except newline/tab
+    html = "".join(ch for ch in html if (ch == "\n" or ch == "\t" or (32 <= ord(ch) <= 0x10FFFF)))
+    return html
+
+def send_newsletter_email(to_email: str, subject: str, newsletter_json: dict) -> dict:
+    """
+    Send an HTML newsletter email using SMTP, or simulate sending in demo mode.
+
+    This function takes structured newsletter data (`newsletter_json`), converts it
+    into HTML, sanitizes the HTML for email compatibility, and then sends it using
+    SMTP. If demo mode is enabled, the email is NOT sent; instead, a debug file is
+    written to `./debug_newsletters/` and metadata is returned.
+
+    Parameters
+    ----------
+    to_email : str
+        Recipient email address, inferred from context state.
+
+    subject : str
+        Subject line for the email, get the title from newsletter_json.
+
+    newsletter_json : dict
+        A structured newsletter dictionary (typically containing title, sections,
+        articles, summaries, URLs, timestamps, etc.) that will be converted to HTML
+        using `convert_newsletter_json_to_html()`.
+
+    Environment Variables
+    ---------------------
+    NEWSLETTER_DEMO_MODE : str
+        "1", "true", or "yes" enables demo mode.
+        In demo mode:
+            - No SMTP connection is attempted.
+            - HTML is generated and sanitized.
+            - HTML output is written to ./debug_newsletters/newsletter_<timestamp>.html
+            - A `mock_sent` status dictionary is returned.
+
+    SMTP_HOST : str
+        Hostname of the SMTP server (e.g., "smtp.gmail.com").
+
+    SMTP_PORT : str or int
+        SMTP port (typically 587 for TLS).
+
+    SMTP_USER : str
+        Username/email for SMTP authentication. **Must be ASCII-only** or the SMTP
+        library may throw UnicodeEncodeError during authentication.
+
+    SMTP_PASS : str
+        Password or app password. **Must be ASCII-only**. If non-ASCII characters
+        such as NBSP (`\\u00A0`) or zero-width characters are present, SMTP auth
+        will fail before the email can be sent.
+
+    NEWSLETTER_FROM_EMAIL : str (optional)
+        Overrides the "From" header. Defaults to SMTP_USER if not provided.
+
+    Behavior
+    --------
+    1. Convert newsletter JSON → HTML via `convert_newsletter_json_to_html()`.
+    2. Sanitize HTML by:
+        - Normalizing Unicode (NFC)
+        - Replacing non-breaking spaces (`\\u00A0`) with normal spaces
+        - Removing invisible Unicode control characters
+    3. If demo mode:
+        - Write HTML to a timestamped file
+        - Return { "status": "mock_sent", "debug_file": "<path>" }
+    4. If SMTP mode:
+        - Validate required SMTP environment variables
+        - Build a MIME EmailMessage with both text/plain and text/html parts
+        - Connect to SMTP with TLS, authenticate, and send the message
+
+    Returns
+    -------
+    dict
+        A structured status object. Possible return formats:
+
+        Successful send:
+            {
+                "status": "sent",
+                "message_id": "smtp-send_message"
+            }
+
+        Demo mode (email not sent):
+            {
+                "status": "mock_sent",
+                "message_id": "demo-<timestamp>",
+                "debug_file": "debug_newsletters/newsletter_<timestamp>.html"
+            }
+
+        Missing SMTP configuration:
+            {
+                "status": "config_error",
+                "message": "SMTP config missing; check environment variables."
+            }
+
+        SMTP authentication error:
+            {
+                "status": "auth_error",
+                "message": "SMTP authentication failed: <error>"
+            }
+
+        Unicode encoding error (most common if credentials contain non-ASCII):
+            {
+                "status": "encoding_error",
+                "message": "Unicode encoding failed: <error>"
+            }
+
+        Generic error:
+            {
+                "status": "error",
+                "message": "SMTP error: <exception repr>"
+            }
+
+    Notes
+    -----
+    - Even if your HTML content is fully UTF-8, **SMTP authentication still requires
+      ASCII-only credentials**. Characters like non-breaking spaces (`\\u00A0`) often
+      appear in secrets when copied from password managers or webpages.
+    - Sanitizing HTML does NOT modify subject, SMTP_USER or SMTP_PASS; those must be
+      clean in the environment before calling this function.
+    - Debug mode is strongly recommended during development to avoid accidental sends.
+
+    """
+
+    
+    demo_mode = os.getenv("NEWSLETTER_DEMO_MODE", "0").lower() in ("1", "true", "yes")
+
+    # sanitize HTML before anything else
+    html = convert_newsletter_json_to_html(newsletter_json)
+    try:
+        html_safe = _sanitize_html_for_email(html)
+        # html_safe = html
+    except Exception as e:
+        logger.exception("Failed to sanitize HTML")
+        html_safe = html or ""
+
+    # -----------------------
+    # DEMO MODE (no real SMTP)
+    # -----------------------
+    if demo_mode:
+        try:
+            print("=== [DEMO] send_newsletter_email called ===")
+            print("To:", to_email)
+            print("Subject:", subject)
+
+            debug_dir = Path("debug_newsletters")
+            debug_dir.mkdir(exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            fname = debug_dir / f"newsletter_{ts}.html"
+            fname.write_text(html_safe, encoding="utf-8")
+            print(f"=== [DEMO] Saved newsletter HTML to {fname}")
+
+            return {
+                "status": "mock_sent",
+                "message_id": f"demo-{ts}",
+                "debug_file": str(fname),
+            }
+        except Exception as e:
+            logger.exception("Demo-mode write failed")
+            return {"status": "error", "message": f"demo_write_error: {e}"}
+
+    # -----------------------
+    # REAL SMTP MODE
+    # -----------------------
+    host = os.getenv("SMTP_HOST")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER")
+    password = os.getenv("SMTP_PASS")
+    from_email = os.getenv("NEWSLETTER_FROM_EMAIL", user)
+
+    if not all([host, port, user, password, from_email]):
+        # Return config error rather than raising
+        return {
+            "status": "config_error",
+            "message": "SMTP config missing; check .env (SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/NEWSLETTER_FROM_EMAIL).",
+        }
+
+    # Build EmailMessage (handles charset/encoding properly)
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = to_email
+
+    # Plain-text fallback
+    plain_text = "This message contains HTML. If you cannot see it, please view in a browser."
+    msg.set_content(plain_text)
+
+    # Attach the HTML alternative. EmailMessage will use utf-8 as needed.
+    msg.add_alternative(html_safe, subtype="html")
+
+    try:
+        with smtplib.SMTP(host, port, timeout=60) as server:
+            server.starttls()
+            server.login(user, password)
+            server.send_message(msg)
+        return {"status": "sent", "message_id": "smtp-send_message"}
+    except smtplib.SMTPAuthenticationError as e:
+        logger.exception("SMTP auth error")
+        return {"status": "auth_error", "message": f"SMTP authentication failed: {e}"}
+    except UnicodeEncodeError as e:
+        # Capture and return a helpful message if encoding still fails
+        logger.exception("UnicodeEncodeError during SMTP send")
+        return {"status": "encoding_error", "message": f"Unicode encoding failed: {e}"}
+    except Exception as e:
+        logger.exception("SMTP error")
+        # include repr(e) so the caller sees the original message (e.g., your 'ascii' codec error)
+        return {"status": "error", "message": f"SMTP error: {e!r}"}

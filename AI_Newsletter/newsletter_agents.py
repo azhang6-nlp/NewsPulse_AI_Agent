@@ -16,6 +16,7 @@ from .utility import (save_state_after_agent_callback,
                       load_user_profile,         
                       semantic_search_articles,  
                       parse_feedback              
+                      send_newsletter_email
                       )
 from .schema import SummaryOutput, NewsletterSections, clarifications_needed, NewsletterOutput, NewsletterProfileOutput, VerificationOutput
 from .prompt import NEWSLETTER_PROMPT
@@ -219,7 +220,7 @@ executive_summary_agent = LlmAgent(
 
         Respond with **only valid JSON**, no extra text.
         """,
-    output_key=STATE_SUMMARIES,
+    output_key="executive_summary",
     output_schema=SummaryOutput,
     after_agent_callback=save_state_after_agent_callback
 )
@@ -233,7 +234,7 @@ INSTRUCTION = """
 You are an expert newsletter writer for an AI/GenAI weekly briefing aimed at senior product and business readers in healthcare insurance.
 The detailed request from the user is : {profile}
 INPUT: The agent will be provided two structured summaries:
- - {executive_summary}  (list of dict with keys: topic, title, url, uuid, publish_date, summary)
+ - {executive_summary}  (list of dict with keys: topic, title, final_url, uuid, publish_date, summary)
 
 TASK:
 Using those inputs, produce JSON only that matches the NewsletterOutput schema exactly:
@@ -245,7 +246,7 @@ Using those inputs, produce JSON only that matches the NewsletterOutput schema e
 NewsletterWriter = LlmAgent(
     name="NewsletterWriter",
     model=MODEL,
-    instruction=INSTRUCTION,
+    instruction=VERIFY_INSTRUCTION,
     output_key="newsletter_result",
     output_schema=NewsletterOutput,
     before_agent_callback=writer_before_agent_callback,

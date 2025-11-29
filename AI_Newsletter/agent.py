@@ -1,7 +1,5 @@
 from google.adk.agents import SequentialAgent, ParallelAgent
 
-# File: AI_Newsletter/agent.py (start of file)
-
 import logging
 
 # Import the setup function
@@ -20,7 +18,8 @@ from .newsletter_agents import (
     executive_fetch_agent,
     executive_summary_agent,
     NewsletterWriter,
-    verification_agent
+    verification_agent,
+    newsletter_dispatcher
 )
 
 # --- 1. Planning Pipeline (Updated) ---
