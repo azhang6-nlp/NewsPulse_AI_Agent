@@ -12,13 +12,13 @@ dependencies = [
     # Core Libraries
     "chromadb (==0.5.3)",
     "fastapi (==0.121.2)",
-    "google-adk (==1.2.1)",
+    "google-adk (>=1.12.1)",
+    "google-auth (==2.43.0)",
     "google-genai (==1.50.1)",
     # Standard Python/Web Dependencies
     "uvicorn (==0.38.0)",
     "jinja2 (==3.1.0)",
     "sqlalchemy (==2.0.44)",
-    "google-auth (==2.43.0)", 
     "google-cloud-aiplatform (==1.127.0)",
     "beautifulsoup4==4.12.3"
 ]
@@ -34,4 +34,4 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["AI_Newsletter*"]
-exclude = ["session*", "tests*", "notebooks*", "docs*"] 
+exclude = ["session*", "tests*"]

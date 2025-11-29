@@ -1,4 +1,5 @@
-from google.adk.agents import SequentialAgent, ParallelAgent
+from google.adk.agents import SequentialAgent, ParallelAgent, LoopAgent
+from google.adk.tools.tool_context import ToolContext
 
 import logging
 
@@ -45,14 +46,13 @@ summary_pipeline_agent = SequentialAgent(
 )
 
 
-# --- 3. Writing and Verification Pipeline ---
-# Goal: Draft and quality-check the newsletter HTML.
-newsletter_writing_verifcation_pipeline_agent = SequentialAgent(
+newsletter_writing_verifcation_pipeline_agent = LoopAgent(
     name="newsletter_writing_verifcation_pipeline",
     sub_agents=[
         NewsletterWriter,
-        verification_agent # Assumed to handle the refinement loop/checker logic
+        verification_agent,
     ],
+    max_iterations=3,   # safety cap
 )
 
 # --- 4. Root Agent (Full Pipeline) ---

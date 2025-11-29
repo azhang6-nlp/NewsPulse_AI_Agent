@@ -16,7 +16,9 @@ from .utility import (save_state_after_agent_callback,
                       semantic_search_articles,  
                       parse_feedback,              
                       send_newsletter_email,
-                      update_agent_state_for_recommender
+                      update_agent_state_for_recommender,
+                      writer_before_agent_callback, 
+                      writer_after_agent_callback
                       )
 from .schema import SummaryOutput, NewsletterSections, clarifications_needed, NewsletterOutput, NewsletterProfileOutput, VerificationOutput
 from .prompt import PLANNER_PROMPT, WRITER_INSTRUCTION
@@ -148,18 +150,38 @@ executive_search_agent = LlmAgent(
     model=MODEL,
     instruction=""" You have the below request from user: 
         {detailed_request}
-        You are a search assistant, the first step of the executive summary agent. For each topic below, perform a Google Search (using the google_search tool) 
-        to have up to **1** relevant search results. Then, return a JSON array where each item include:
-            - topic: the topic string (please do include the date range in the topic)
+
+        You are a search assistant, the first step of the executive summary agent.
+
+        GOAL:
+        For each topic below, find at most **1** highly relevant result
+        from the **last 7 days only**.
+
+        HOW TO USE google_search:
+        - When you call the `google_search` tool, always:
+          - Use the topic string as the query.
+          - Constrain results to the last 7 days (for example by using a
+            recency / date filter such as `recency_days: 7` if the tool supports it,
+            or by adding suitable time filters to the query like "past 7 days").
+        - After you get search results, infer `publish_date` from the page
+          (snippet or content), and **discard** any result older than 7 days.
+
+        For each topic, return a JSON array where each item includes:
+            - topic: the topic string (include the time window, e.g. "LLM safety updates (last 7 days)")
             - title: the title or snippet of the result  
             - url: the URL of the result  
-            - publish_date: the publish date infurred from the page
+            - publish_date: the publish date inferred from the page (ISO if possible)
             - uuid: unique identification for each result
-            - short_summary: summary of the web page
+            - short_summary: a short summary of the web page
 
         Here are the topics to search:
         {search_queries}
-        Make sure your output is **valid JSON only** (no extra commentary, only keep those within the date range of interest).
+
+        OUTPUT RULES:
+        - If no suitable result was found in the last 7 days for a topic,
+          omit that topic or set url to null and short_summary to "".
+        - Make sure your output is **valid JSON only** (no extra commentary),
+          and **only keep results within the last 7 days**.
         """,
     tools=[google_search],
     output_key="search_results_executive",
@@ -226,6 +248,14 @@ executive_summary_agent = LlmAgent(
     after_agent_callback=save_state_after_agent_callback
 )
 
+def exit_loop(tool_context: ToolContext):
+    """
+    Signal to the LoopAgent that verification is complete and
+    we can stop iterating. This is used as a tool by Newsletter_Verifier.
+    """
+    tool_context.actions.escalate = True
+    return {"status": "loop_ended"}
+
 
 # -----------------------------------------------------------
 # 8. Newsletter Writer 
@@ -238,70 +268,47 @@ NewsletterWriter = LlmAgent(
     output_key="newsletter_result",
     output_schema=NewsletterOutput,
     before_agent_callback=writer_before_agent_callback,
-    after_agent_callback=save_state_after_agent_callback 
+    after_agent_callback=writer_after_agent_callback,
 )
 
-# -----------------------------------------------------------
-# 9. Verification Agent 
-# -----------------------------------------------------------
 
 verification_agent = LlmAgent(
     name="Newsletter_Verifier",
     model=MODEL,
     instruction="""
-You are a precise verification assistant. You will be given a list of sentences and, reference from the source documents. You will verify each sentence against the provided source excerpts.\nFor each sentence, return a JSON object with keys: sentence, accuracy_or_not (true/false), modified_version (if false, a conservative correction grounded solely in the provided excerpts), and your justification.\nDo NOT hallucinate or access external pages. Only use the reference to verify sentences.
-    {verification_pairs}
-OUTPUT FORMAT: JSON array ONLY with on extra text: [{"sentence":"...","uuid": the sentence identifier, "accuracy_or_not": true|false, "modified_version":"...","justification":"reasons for the accuracy or inaccuracy"}]'
+You are a precise verification assistant. You will be given a list of sentences and references from the source documents.
+
+For each sentence:
+- Output an object with:
+  - sentence (string)
+  - uuid (string)
+  - accuracy_or_not (true/false)
+  - modified_version (string)
+  - justification (string)
+
+Rules for `modified_version`:
+- If accuracy_or_not is true and no change is needed, set modified_version to be EXACTLY the original sentence.
+- If accuracy_or_not is false, set modified_version to a conservative corrected version.
+- Never use null for modified_version; always return a string.
+
+Input:
+{verification_pairs}
+
+OUTPUT FORMAT:
+JSON array ONLY, e.g.:
+[
+  {
+    "sentence": "...",
+    "uuid": "...",
+    "accuracy_or_not": true,
+    "modified_version": "...",  // original or corrected sentence
+    "justification": "..."
+  }
+]
     """,
     output_key="verification_result",
     before_agent_callback=prepare_verify_pairs,
     after_agent_callback=apply_verification_updates,
-    output_schema = VerificationOutput
-)
-
-# -----------------------------------------------------------
-# 10. newsletter_dispatcher Agent (NEW)
-# -----------------------------------------------------------
-
-
-newsletter_dispatcher = LlmAgent(
-    model="gemini-2.5-flash",
-    name="newsletter_dispatcher",
-    description=(
-        "Converts newsletter json to HTML and sends it to an email using "
-        "the tool of send_newsletter_email."
-    ),
-    instruction=(
-        "You MUST:\n"
-        "1. Call send_newsletter_email exactly once. get the to_email from {email} \n"
-        "3. Pass to_email, subject, and the newsletter json in {newsletter_updated}.\n"
-        "Return ONLY the tool call result.\n"
-    ),
-    tools=[send_newsletter_email],
-)
-# -----------------------------------------------------------
-# 11. Feedback Agent (NEW)
-# -----------------------------------------------------------
-
-feedback_agent = LlmAgent(
-    name="FeedbackAgent",
-    model=MODEL,
-    description="Interprets user feedback and updates preferences in the profile for future runs.",
-    tools=[parse_feedback, save_user_profile], # Must include both parsing and saving tools
-    instruction=f"""
-You are the FeedbackAgent for the AI newsletter.
-
-The LAST user message contains free-text feedback about the newsletter.
-Also available in state is the current profile: state["{STATE_USER_PROFILE}"].
-
-Steps:
-1. Call parse_feedback(raw_email_text) with the *entire* last user message.
-2. Combine the parsed feedback with the existing profile to update fields like technical_level, preferred_sources, or the detailed_request.
-   *Example: If feedback says "too technical," reduce the technical_level.*
-3. Call save_user_profile(updated_profile) to persist these changes for the next run.
-4. Return ONLY the updated profile as JSON.
-
-If no meaningful feedback is present, just return the unchanged profile.
-""",
-    output_key=STATE_USER_PROFILE,
+    output_schema=VerificationOutput,
+    tools=[exit_loop],
 )

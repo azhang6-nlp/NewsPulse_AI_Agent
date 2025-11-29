@@ -1,9 +1,5 @@
-from typing import List
+from typing import List, Literal, Optional
 from pydantic import BaseModel, AnyUrl, Field
-
-
-from pydantic import BaseModel, Field
-from typing import List, Literal
 
 class NewsletterProfileOutput(BaseModel):
     email: str = Field(
@@ -82,9 +78,6 @@ class NewsletterOutput(BaseModel):
     tl_dr: str = Field(..., description="TL;DR (3 bullet lines)")
     call_to_action: str = Field(..., description="One recommended next step for readers")
 
-from typing import List
-from pydantic import BaseModel, Field
-
 class AccuracyCheckItem(BaseModel):
     sentence: str = Field(
         ...,
@@ -104,5 +97,13 @@ class AccuracyCheckItem(BaseModel):
         description="Explanation detailing why the sentence is accurate or inaccurate."
     )
 
+class VerificationItem(BaseModel):
+    sentence: str
+    uuid: str
+    accuracy_or_not: bool
+    modified_version: Optional[str] = ""  # 👈 allow None, default empty string
+    justification: str
+
 class VerificationOutput(BaseModel):
     VerificationOutput: List[AccuracyCheckItem]
+
