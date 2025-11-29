@@ -15,7 +15,8 @@ dependencies = [
     "jinja2 (==3.1.0)",
     "uvicorn (==0.38.0)",
     "sqlalchemy (==2.0.44)",
-    "google-cloud-aiplatform (==1.127.0)"
+    "google-cloud-aiplatform (==1.127.0)",
+    "beautifulsoup4==4.12.3"
 ]
 
 
