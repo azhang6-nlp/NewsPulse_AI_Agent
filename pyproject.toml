@@ -1,29 +1,36 @@
 [project]
 name = "newsletter"
 version = "0.0.1"
-description = ""
+description = "AI Newsletter Generation Pipeline" # Added descriptive text
 authors = [
     {name = "Your Name",email = "you@example.com"}
 ]
-requires-python = ">=3.12"
+readme = "README.md" 
+
+requires-python = ">=3.10"
 dependencies = [
+    # Core Libraries
     "chromadb (==0.5.3)",
     "fastapi (==0.121.2)",
     "google-adk (==1.2.1)",
-    "google-auth (==2.43.0)",
     "google-genai (==1.50.1)",
-    "jinja2 (==3.1.0)",
+    # Standard Python/Web Dependencies
     "uvicorn (==0.38.0)",
+    "jinja2 (==3.1.0)",
     "sqlalchemy (==2.0.44)",
-    "google-cloud-aiplatform (==1.127.0)"
+    "google-auth (==2.43.0)", 
+    "google-cloud-aiplatform (==1.127.0)",
 ]
+
+# --- NEW SECTION: Build Requirements for Compiling Dependencies ---
 
 
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+# Added numpy and cython here as well, to satisfy both uv and general setuptools builds.
+requires = ["setuptools>=64", "wheel", "numpy", "cython"] 
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["AI_Newsletter*"]
-exclude = ["session*", "tests*"]
+exclude = ["session*", "tests*", "notebooks*", "docs*"] 
