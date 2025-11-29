@@ -4,7 +4,6 @@ from google.adk.tools import google_search
 from .utility import (save_state_after_agent_callback, 
                       update_agent_state_for_clarification,
                       update_agent_state_for_profile,
-                    #   before_agent_callback_clarification,
                       fetch_page_details, 
                       update_agent_state,
                       planner_before_agent_callback,
@@ -13,7 +12,8 @@ from .utility import (save_state_after_agent_callback,
                       apply_verification_updates,
                       save_user_profile,
                       save_search_results,
-                      create_uuid_for_search_results
+                      create_uuid_for_search_results,
+                      send_newsletter_email
                       )
 from .schema import SummaryOutput, NewsletterSections, clarifications_needed, NewsletterOutput, NewsletterProfileOutput, VerificationOutput
 from .prompt import NEWSLETTER_PROMPT
@@ -59,9 +59,7 @@ Task:
      If the user did not provide any, use an empty list [].
    - a detail request elaborating user's requirement for the newsletter
 
-3. Call the save_user_profile tool with this JSON to persist it.
-
-4. Return ONLY valid JSON (no prose). Example:
+3. Return ONLY valid JSON (no prose). Example:
 
 {
   "email": "user@example.com",
@@ -87,7 +85,6 @@ planner_agent = LlmAgent(
     output_schema= NewsletterSections,
     after_agent_callback=update_agent_state,
     output_key = 'plan',
-    # before_agent_callback=planner_before_agent_callback,
     )
 
 
@@ -162,51 +159,29 @@ executive_summary_agent = LlmAgent(
 
         Respond with **only valid JSON**, no extra text.
         """,
-    # before_model_callback= get_valid_full_text
-    # tools=[summarize_tool],
     output_key="executive_summary",
     output_schema=SummaryOutput,
     after_agent_callback=save_state_after_agent_callback
 )
 
 
-
-
-
-# newsletter_agent.py
-# import json
-# import time
-# from typing import List, Optional
-# from pydantic import BaseModel, Field
-# from google.adk.agents import LlmAgent
-# from google.adk.agents.callback_context import CallbackContext
-# from google.adk.models import LlmResponse
-# from google.adk.sessions import InMemorySessionService
-# from google.adk.runners import Runner
-# from google.genai import types
-
-# MODEL = "gemini-2.5-flash"  # adapt if you want a different model
-
-# -------------------------
-# The Agent: instruction & wiring
-# -------------------------
-INSTRUCTION = """
+VERIFY_INSTRUCTION = """
 You are an expert newsletter writer for an AI/GenAI weekly briefing aimed at senior product and business readers in healthcare insurance.
 The detailed request from the user is : {profile}
 INPUT: The agent will be provided two structured summaries:
- - {executive_summary}  (list of dict with keys: topic, title, url, uuid, publish_date, summary)
+ - {executive_summary}  (list of dict with keys: topic, title, final_url, uuid, publish_date, summary)
 
 TASK:
 Using those inputs, produce JSON only that matches the NewsletterOutput schema exactly:
 - newsletter_title (short headline)
 - date (YYYY-MM-DD)
 - short_blurb (1 sentence)
-- executive_summary (list of items; each item: heading, body, url, uuid; draw from executive_summary;  
+- executive_summary (list of items; each item: heading, body, final_url, uuid; draw from executive_summary;  
     please refer to {section_outline} to divide each section to     
     subsection if the total items are more than 3. Try to keep the mamximum number of items for each subsection to 3  be at most)
-- business_implications (list of items; each item: heading, body, url, uuid; emphasize implications for healthcare insurance; please refer to {section_outline} to divide each section to subsection if the total items are more than 3. Try to keep the mamximum number of items for each subsection to
+- business_implications (list of items; each item: heading, body, final_url, uuid; emphasize implications for healthcare insurance; please refer to {section_outline} to divide each section to subsection if the total items are more than 3. Try to keep the mamximum number of items for each subsection to
     be at most 3. )
-- citations (list of source URLs, got from url from executive_sumamry and business_summary; deduplicate)
+- citations (list of source URLs, got from final_url from executive_sumamry and business_summary; deduplicate)
 - tl_dr (3 concise bullet lines separated by '\\n')
 - call_to_action (single paragraph advising a practical next step for product leaders)
 
@@ -217,20 +192,18 @@ REQUIREMENTS:
 4. For the three sections of technical_highlitghts and business_implications, please refer to {section_outline}
     to divide each section to subsection if the total items are more than 3. Try to keep the mamximum number of items for each subsection to
     be at most 3. 
-5. For citations, use the provided url fields; if AnyUrl appears, output its string form.
+5. For citations, use the provided final_url fields; if AnyUrl appears, output its string form.
 6. When synthesizing, prefer facts and avoid hallucination; if a fact is only in one summary, mark it as "reported by source".
 """
 
 NewsletterWriter = LlmAgent(
     name="NewsletterWriter",
     model=MODEL,
-    instruction=INSTRUCTION,
+    instruction=VERIFY_INSTRUCTION,
     output_key="newsletter_result",
     output_schema=NewsletterOutput,
-    # disallow_transfer_to_parent=True,
-    # disallow_transfer_to_peers=True,
     before_agent_callback=writer_before_agent_callback,
-    after_agent_callback=save_state_after_agent_callback # prepare_verify_pairs
+    after_agent_callback=save_state_after_agent_callback 
 )
 
 verification_agent = LlmAgent(
@@ -245,4 +218,21 @@ OUTPUT FORMAT: JSON array ONLY with on extra text: [{"sentence":"...","uuid": th
     before_agent_callback=prepare_verify_pairs,
     after_agent_callback=apply_verification_updates,
     output_schema = VerificationOutput
+)
+
+
+newsletter_dispatcher = LlmAgent(
+    model="gemini-2.5-flash",
+    name="newsletter_dispatcher",
+    description=(
+        "Converts newsletter json to HTML and sends it to an email using "
+        "the tool of send_newsletter_email."
+    ),
+    instruction=(
+        "You MUST:\n"
+        "1. Call send_newsletter_email exactly once. get the to_email from {email} \n"
+        "3. Pass to_email, subject, and the newsletter json in {newsletter_updated}.\n"
+        "Return ONLY the tool call result.\n"
+    ),
+    tools=[send_newsletter_email],
 )

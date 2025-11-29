@@ -54,7 +54,7 @@ class NewsletterSections(BaseModel):
 class SummaryItem(BaseModel):
     topic: str = Field(..., description="The topic associated with this page")
     title: str = Field(..., description="The title associated with this page")
-    url: str = Field(..., description="The URL of the page summarized")
+    final_url: str = Field(..., description="The URL of the page summarized")
     uuid: str = Field(..., description="The unique identifier for the page, passed on from search and fetch agent")
     publish_date: str = Field(..., description="publish date of the webpage")
     summary: str = Field(..., description="A concise summary of the page's full text")
@@ -68,7 +68,7 @@ class SummaryOutput(BaseModel):
 class SectionItem(BaseModel):
     heading: str
     body: str
-    url: str
+    final_url: str
     uuid: str
 
 

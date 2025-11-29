@@ -6,7 +6,8 @@ from .newsletter_agents import (profile_agent,
                                 executive_fetch_agent,
                                 executive_summary_agent,
                                 NewsletterWriter,
-                                verification_agent)
+                                verification_agent,
+                                newsletter_dispatcher)
 
 
 planning_pipeline = SequentialAgent(
@@ -31,7 +32,8 @@ newsletter_writing_verifcation_pipeline_agent = SequentialAgent(
     name="newsletter_writing_verifcation_pipeline",
     sub_agents=[
                 NewsletterWriter,
-                verification_agent
+                verification_agent,
+                newsletter_dispatcher
                 ],
 )
 
