@@ -116,6 +116,5 @@ sessions/
 agent_state*
 session*
 new_env/
-newsletter*
 .DS_Store
 

@@ -6,9 +6,6 @@ import logging
 from .logger_config import setup_file_logging
 setup_file_logging(logging.DEBUG) # Call it first thing to start logging
 
-from google.adk.agents import LlmAgent
-# ... rest of your imports and agent definitions ...
-
 from .newsletter_agents import (
     profile_agent,
     planner_agent,
@@ -69,10 +66,13 @@ root_agent = SequentialAgent(
         # PHASE 2: Content Generation
         summary_pipeline_agent,
         
-        # PHASE 3: Writing and Delivery (Verification/Refinement)
+        # PHASE 3: Writing and verification (Verification/Refinement)
         newsletter_writing_verifcation_pipeline_agent,
+
+        # PHASE 4: Delivery
+        newsletter_dispatcher,
         
-        # PHASE 4: Feedback Loop (Runs at the end to process user reply)
+        # PHASE 5: Feedback Loop (Runs at the end to process user reply)
         feedback_agent, 
     ],
 )

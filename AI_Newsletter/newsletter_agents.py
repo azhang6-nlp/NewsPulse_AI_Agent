@@ -5,8 +5,7 @@ from .utility import (save_state_after_agent_callback,
                       update_agent_state_for_clarification,
                       update_agent_state_for_profile,
                       fetch_page_details, 
-                      update_agent_state,
-                      planner_before_agent_callback,
+                      update_agent_state_planner,
                       writer_before_agent_callback,
                       prepare_verify_pairs,
                       apply_verification_updates,
@@ -15,11 +14,12 @@ from .utility import (save_state_after_agent_callback,
                       create_uuid_for_search_results,
                       load_user_profile,         
                       semantic_search_articles,  
-                      parse_feedback              
-                      send_newsletter_email
+                      parse_feedback,              
+                      send_newsletter_email,
+                      update_agent_state_for_recommender
                       )
 from .schema import SummaryOutput, NewsletterSections, clarifications_needed, NewsletterOutput, NewsletterProfileOutput, VerificationOutput
-from .prompt import NEWSLETTER_PROMPT
+from .prompt import PLANNER_PROMPT, WRITER_INSTRUCTION
 
 MODEL = "gemini-2.5-flash"
 
@@ -117,10 +117,11 @@ Task:
 
 Return ONLY a JSON object that matches the structure of the detailed request:
 {{
-  "detailed_request": "Original request text, now enhanced with 1-2 related, novel concepts, e.g., '... (and include Model Drift as a topic).'"
+  "detailed_request_updated": "Original request text, now enhanced with 1-2 related, novel concepts, e.g., '... (and include Model Drift as a topic).'"
 }}
 """,
     output_key=STATE_REFINED_TOPICS,
+    after_agent_callback=update_agent_state_for_recommender,
 )
 
 
@@ -131,9 +132,9 @@ Return ONLY a JSON object that matches the structure of the detailed request:
 planner_agent = LlmAgent(
     model=MODEL,
     name="Newsletter_Planner",
-    instruction=NEWSLETTER_PROMPT,
+    instruction=PLANNER_PROMPT,
     output_schema= NewsletterSections,
-    after_agent_callback=update_agent_state,
+    after_agent_callback=update_agent_state_planner,
     output_key = 'plan',
     )
 
@@ -146,7 +147,7 @@ executive_search_agent = LlmAgent(
     name="executive_search_agent",
     model=MODEL,
     instruction=""" You have the below request from user: 
-        {detailed_request?}
+        {detailed_request}
         You are a search assistant, the first step of the executive summary agent. For each topic below, perform a Google Search (using the google_search tool) 
         to have up to **1** relevant search results. Then, return a JSON array where each item include:
             - topic: the topic string (please do include the date range in the topic)
@@ -157,7 +158,7 @@ executive_search_agent = LlmAgent(
             - short_summary: summary of the web page
 
         Here are the topics to search:
-        {search_queries?}
+        {search_queries}
         Make sure your output is **valid JSON only** (no extra commentary, only keep those within the date range of interest).
         """,
     tools=[google_search],
@@ -230,23 +231,10 @@ executive_summary_agent = LlmAgent(
 # 8. Newsletter Writer 
 # -----------------------------------------------------------
 
-INSTRUCTION = """
-You are an expert newsletter writer for an AI/GenAI weekly briefing aimed at senior product and business readers in healthcare insurance.
-The detailed request from the user is : {profile}
-INPUT: The agent will be provided two structured summaries:
- - {executive_summary}  (list of dict with keys: topic, title, final_url, uuid, publish_date, summary)
-
-TASK:
-Using those inputs, produce JSON only that matches the NewsletterOutput schema exactly:
-- newsletter_title (short headline)
-- date (YYYY-MM-DD)
-# ... [rest of instruction is truncated for brevity]
-"""
-
 NewsletterWriter = LlmAgent(
     name="NewsletterWriter",
     model=MODEL,
-    instruction=VERIFY_INSTRUCTION,
+    instruction=WRITER_INSTRUCTION,
     output_key="newsletter_result",
     output_schema=NewsletterOutput,
     before_agent_callback=writer_before_agent_callback,
@@ -271,9 +259,28 @@ OUTPUT FORMAT: JSON array ONLY with on extra text: [{"sentence":"...","uuid": th
     output_schema = VerificationOutput
 )
 
-
 # -----------------------------------------------------------
-# 10. Feedback Agent (NEW)
+# 10. newsletter_dispatcher Agent (NEW)
+# -----------------------------------------------------------
+
+
+newsletter_dispatcher = LlmAgent(
+    model="gemini-2.5-flash",
+    name="newsletter_dispatcher",
+    description=(
+        "Converts newsletter json to HTML and sends it to an email using "
+        "the tool of send_newsletter_email."
+    ),
+    instruction=(
+        "You MUST:\n"
+        "1. Call send_newsletter_email exactly once. get the to_email from {email} \n"
+        "3. Pass to_email, subject, and the newsletter json in {newsletter_updated}.\n"
+        "Return ONLY the tool call result.\n"
+    ),
+    tools=[send_newsletter_email],
+)
+# -----------------------------------------------------------
+# 11. Feedback Agent (NEW)
 # -----------------------------------------------------------
 
 feedback_agent = LlmAgent(

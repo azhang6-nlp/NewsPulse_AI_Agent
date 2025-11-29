@@ -25,6 +25,48 @@ CONTENT_HINTS = [
     "Section1", "RichText", "td-post-content",
 ]
 
+
+
+def safe_json_loads(text: str) -> Any:
+    """
+    More lenient JSON loader:
+      - strips ```json fences
+      - fixes some unsafe backslashes
+      - strips control chars if first parse fails
+    """
+    text = text.strip()
+    text = re.sub(r"^```(json)?", "", text)
+    text = re.sub(r"```$", "", text)
+
+    text = re.sub(
+        r'\\(?!["\\/bfnrtu])',
+        r"\\\\",
+        text,
+    )
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        print("Decode failed:", e)
+        print("Trying lenient mode...")
+
+    text = re.sub(r"[\x00-\x1F]+", "", text)
+    return json.loads(text)
+
+def save_state_after_agent_callback(callback_context: CallbackContext) -> None:
+    """Persist the current state to a JSON (or TXT) file for debugging."""
+    state_dict = callback_context.state.to_dict()
+    print(f"[save_state_after_agent_callback] Current session state keys: {state_dict.keys()}")
+
+    filename_base = f"agent_state_{callback_context.agent_name}"
+    try:
+        with open(f"{filename_base}.json", "w", encoding="utf-8") as f:
+            json.dump(state_dict, f, indent=2, ensure_ascii=False)
+    except Exception:
+        with open(f"{filename_base}.txt", "w", encoding="utf-8") as f:
+            f.write(str(state_dict))
+
+
 def update_agent_state_for_clarification(callback_context):
     if callback_context.state['request_clarification']:
         clarifications_needed = callback_context.state['request_clarification'].get('clarifications_needed',[])
@@ -38,16 +80,6 @@ def update_agent_state_for_clarification(callback_context):
                 callback_context.state["formatted_questions"] = [
                     f"Question {q}\n " for q in questions
                 ]
-
-def update_agent_state_for_profile(callback_context):
-    profile = callback_context.state.get('profile',{})
-    if 'detailed_request' in profile:
-        callback_context.state["detailed_request"] = profile['detailed_request']
-        callback_context.state["email"] = profile['email']
-    init_db()
-    save_user_profile(profile)
-    save_state_after_agent_callback(callback_context)
-
 
 def update_agent_state_for_profile(callback_context: CallbackContext) -> None:
     """
@@ -63,31 +95,60 @@ def update_agent_state_for_profile(callback_context: CallbackContext) -> None:
         profile_data = profile_raw
     else:
         try:
-            profile_data = json.loads(profile_raw)
+            profile_data = safe_json_loads(profile_raw)
         except Exception as e:
             print(f"Error parsing JSON from profile_agent: {e}")
             print(f"Raw output: {profile_raw}")
             return
 
     callback_context.state["profile"] = profile_data
+    callback_context.state["email"] = profile_data.get('email','example@example.com')
     callback_context.state["detailed_request"] = profile_data.get(
         "detailed_request", "No request found"
     )
 
+    init_db()
+    save_user_profile(profile_data)
+    save_state_after_agent_callback(callback_context)
 
-def save_state_after_agent_callback(callback_context: CallbackContext) -> None:
-    """Persist the current state to a JSON (or TXT) file for debugging."""
-    state_dict = callback_context.state.to_dict()
-    print(f"[save_state_after_agent_callback] Current session state keys: {state_dict.keys()}")
+def update_agent_state_for_recommender(callback_context: CallbackContext) -> None:
+    """
+    Normalize `state['profile']` to a dict and expose detailed_request in state.
+    This is used as an after_agent_callback for the profile agent.
+    """
+    refined_topics = callback_context.state.get("refined_topics")
+    if refined_topics is None:
+        print("[profile_callback] No 'refined_topics' key found in state")
+        return
 
-    filename_base = f"agent_state_{callback_context.agent_name}"
-    try:
-        with open(f"{filename_base}.json", "w", encoding="utf-8") as f:
-            json.dump(state_dict, f, indent=2, ensure_ascii=False)
-    except Exception:
-        with open(f"{filename_base}.txt", "w", encoding="utf-8") as f:
-            f.write(str(state_dict))
+    if isinstance(refined_topics, dict):
+        updated_request = refined_topics.get('detailed_request_updated','')
+    else:
+        try:
+            updated_request = safe_json_loads(refined_topics).get('detailed_request_updated','')
+        except Exception as e:
+            print(f"Error parsing JSON from refined_topics: {e}")
+            print(f"Raw output: {refined_topics}")
+            return
 
+    callback_context.state["profile"]['detailed_request'] = updated_request
+    callback_context.state["detailed_request"] =updated_request
+
+    save_state_after_agent_callback(callback_context)
+
+
+
+def update_agent_state_planner(callback_context: CallbackContext):
+    if callback_context.state['plan']:
+        callback_context.state["search_queries"] = callback_context.state['plan'].get('search_queries',[])
+        prompts = callback_context.state['plan'].get('task_delegation_plan',{})
+        callback_context.state['executive_summary_agent_prompt'] = prompts.get('executive_summary_agent','')
+        callback_context.state['section_outline'] = callback_context.state['plan'].get('section_outline',{})
+    
+    save_state_after_agent_callback(callback_context)
+
+
+# for fetch web pages
 
 def clean_text(txt: str) -> str:
     """Collapse whitespace and trim."""
@@ -252,66 +313,6 @@ def fetch_page_details(pages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return results
 
 
-def update_agent_state(callback_context: CallbackContext):
-    profile = callback_context.state.get("profile")
-
-    if profile is None:
-        logging.warning("[update_agent_state] No 'profile' in state")
-        return None
-
-    # If it's already a dict (maybe from another callback), don't parse again
-    if isinstance(profile, dict):
-        profile_data = profile
-    else:
-        # Empty string or whitespace? Nothing to parse.
-        if not str(profile).strip():
-            logging.warning("[update_agent_state] 'profile' is empty or whitespace")
-            return None
-
-        try:
-            profile_data = json.loads(profile)
-        except Exception as e:
-            logging.error(
-                "[update_agent_state] Failed to json.loads(profile): %s; raw=%r",
-                e,
-                profile,
-            )
-            return None
-
-    # Store normalized dict back
-    callback_context.state["profile"] = profile_data
-
-    # Ensure detailed_request exists
-    if "detailed_request" not in callback_context.state:
-        callback_context.state["detailed_request"] = profile_data.get(
-            "detailed_request", "No request found"
-        )
-
-    # 🔹 NEW: ensure optional context variables exist so ADK templating won't crash
-    for key in ["executive_summary_agent_prompt", "search_queries"]:
-        if key not in callback_context.state:
-            callback_context.state[key] = ""
-
-    return None
-    if callback_context.state['plan']:
-        callback_context.state["search_queries"] = callback_context.state['plan'].get('search_queries',[])
-        prompts = callback_context.state['plan'].get('task_delegation_plan',{})
-        callback_context.state['executive_summary_agent_prompt'] = prompts.get('executive_summary_agent','')
-        callback_context.state['section_outline'] = callback_context.state['plan'].get('section_outline',{})
-    
-    profile = callback_context.state.get('profile',{})
-    if profile:
-        if type(profile) == str:
-            profile = json.loads(profile)
-        print(callback_context.state['profile'])
-        callback_context.state["detailed_request"] = profile['detailed_request']
-        callback_context.state["email"] = profile['email']
-
-    # state_dict = callback_context.state.to_dict()
-    # print(f"[after_model] Current session state: {state_dict.keys()}")
-
-
-
 def planner_before_agent_callback(callback_context: CallbackContext) -> None:
     """
     Guard before planner agent: ensure clarifications are done.
@@ -332,11 +333,6 @@ def planner_before_agent_callback(callback_context: CallbackContext) -> None:
             "detailed_request", ""
         )
 
-
-def writer_before_agent_callback(callback_context: CallbackContext) -> None:
-        callback_context.state['detailed_request'] = clarifications.get('detailed_request', '')
-
-
 def writer_before_agent_callback(callback_context):
     """
     Guard before writer agent: ensure executive summary is done.
@@ -354,32 +350,6 @@ def writer_before_agent_callback(callback_context):
     else:
         raise RuntimeError("Pipeline paused: executive summary is still pending!")
 
-
-def safe_json_loads(text: str) -> Any:
-    """
-    More lenient JSON loader:
-      - strips ```json fences
-      - fixes some unsafe backslashes
-      - strips control chars if first parse fails
-    """
-    text = text.strip()
-    text = re.sub(r"^```(json)?", "", text)
-    text = re.sub(r"```$", "", text)
-
-    text = re.sub(
-        r'\\(?!["\\/bfnrtu])',
-        r"\\\\",
-        text,
-    )
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        print("Decode failed:", e)
-        print("Trying lenient mode...")
-
-    text = re.sub(r"[\x00-\x1F]+", "", text)
-    return json.loads(text)
 
 
 def prepare_verify_pairs(callback_context: CallbackContext) -> None:
@@ -868,19 +838,8 @@ def save_article_for_user(user_email: str, article: Dict[str, Any]) -> None:
         )
 
 
-# ---------- Stubs for future tools ----------
+# ---------- delivery agent ----------
 
-
-def semantic_search_articles(topics: str) -> List[Dict[str, Any]]:
-    """Placeholder: semantic search against a vector store."""
-    print(f"STUB: Performing semantic search for topics: {topics}")
-    return []
-
-
-def parse_feedback(raw_feedback: str) -> Dict[str, Any]:
-    """Placeholder: parse free-form feedback into structured updates."""
-    print(f"STUB: Parsing raw feedback: {raw_feedback}")
-    return {}
 def convert_newsletter_json_to_html(data: dict) -> str:
     """
     Convert the summarized newsletter JSON into a full HTML email.
@@ -1191,3 +1150,19 @@ def send_newsletter_email(to_email: str, subject: str, newsletter_json: dict) ->
         logger.exception("SMTP error")
         # include repr(e) so the caller sees the original message (e.g., your 'ascii' codec error)
         return {"status": "error", "message": f"SMTP error: {e!r}"}
+
+
+
+# ---------- Stubs for future tools ----------
+
+
+def semantic_search_articles(topics: str) -> List[Dict[str, Any]]:
+    """Placeholder: semantic search against a vector store."""
+    print(f"STUB: Performing semantic search for topics: {topics}")
+    return []
+
+
+def parse_feedback(raw_feedback: str) -> Dict[str, Any]:
+    """Placeholder: parse free-form feedback into structured updates."""
+    print(f"STUB: Parsing raw feedback: {raw_feedback}")
+    return {}

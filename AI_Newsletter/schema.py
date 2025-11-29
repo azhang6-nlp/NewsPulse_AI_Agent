@@ -74,7 +74,7 @@ class SectionItem(BaseModel):
 
 class NewsletterOutput(BaseModel):
     newsletter_title: str = Field(..., description="Short headline for the newsletter")
-    date: str = Field(..., description="Publication date (YYYY-MM-DD), got from session state newsletter_date field")
+    date: str = Field(..., description="Publication date (YYYY-MM-DD), got from session state newsletter_date field or infer from detailed_request")
     short_blurb: str = Field(..., description="One-sentence summary / lede")
     executive_summary: List[SectionItem] = Field(..., description="Key executive summaries (heading & body)")
     business_implications: List[SectionItem] = Field(..., description="Key business/industry implications (heading & body)")

@@ -20,6 +20,7 @@ dependencies = [
     "sqlalchemy (==2.0.44)",
     "google-auth (==2.43.0)", 
     "google-cloud-aiplatform (==1.127.0)",
+    "beautifulsoup4==4.12.3"
 ]
 
 # --- NEW SECTION: Build Requirements for Compiling Dependencies ---
