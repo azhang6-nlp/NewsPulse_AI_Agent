@@ -1,119 +1,120 @@
+<img width="100" height="106" alt="image" src="https://github.com/user-attachments/assets/5d543524-726e-411c-aa37-c3b43c46aec1" />
+ 
+<h1 style="font-size:36px;">NewsPulse AI Agent</h1>
 
-# 📰 AI Newsletter – Multi-Agent Personalized News System
-
-A multi-agent system that profiles users, retrieves fresh AI/ML news, summarizes content, generates a personalized HTML newsletter, evaluates quality with an LLM loop, and finally delivers the email — with feedback incorporated back into long-term memory.
+<h2 style="font-size:28px;">Multi-Agent Personalized AI/ML Newsletter System (Powered by Google ADK)</h2>
 
 
-AI_Newsletter/
-  ├── __init__.py
-  ├── agent.py              # <- ADK entrypoint (defines root_agent)
-  ├── newsletter_agents.py  # define all the adk agents used by the root_agent (see below for more info)
-  └── utility.py            # user profile storage; real email integration; funtion tools;  other functions for state management
-  └── schema.py             # define output schemas for various agents
-  └── logger_config.py      # logging for sessions
 
-# 🚀 Installation (pyproject.toml)
+NewsPulse AI is an autonomous, self-correcting multi-agent research and newsletter system.
+It profiles the user, retrieves fresh news, summarizes and verifies content, generates a beautiful HTML newsletter, evaluates quality with an LLM loop, learns from feedback, and continuously adapts over time.
 
-Create and activate your env:
+Built using Google ADK’s LLM-powered multi-agent orchestration framework.
 
-```bash
-uv venv --python 3.12 --seed
-source .venv/bin/activate
-```
+<h3 style="font-size:22px;">📘 1. Project Overview</h3>
 
-Install all project dependencies:
+**Project Name**: NewsPulse AI Agent 
 
-```bash
-uv pip install .
-```
+**Platform**: Google ADK (LLM-powered multi-agent orchestrator)
 
----
+**Team**:
 
-# 🌐 Test on ADK UI
+Shuai Tan — Product Manager
 
-1. Put your own `api_key` into `.env`
+Andy Zhang — Developer
 
-2. Start the ADK dev UI:
+Vivien Li — Developer
 
-   ```bash
-   # adk web --reload
-   uv run adk web
-   ```
+Adelie Yang — Developer
 
-3. Open:
-   **[http://localhost:8000/](http://localhost:8000/)**
+<h3 style="font-size:22px;">⚠️ 2. Problem Statement</h3>
 
-4. Select the **AI_Newsletter** agent
+Executives and AI professionals are overwhelmed with information noise. They receive hundreds of generic alerts each day, yet:
 
-5. Interact with the agent workflow from the browser UI
+* Can't filter signal from noise
 
----
+* Lack personalized, domain-aware summaries
 
-# 🔥 Test with FastAPI UI
+* Face hallucination risks with most generative AI tools
 
-Activate env:
+* Lose productivity searching for relevant insights
 
-```bash
-source .venv/bin/activate
-```
+They need a personalized, accurate, and timely intelligence brief that is always verified.
 
-Install local project (if not done):
+<h3 style="font-size:22px;">🎯 3. Product Vision & Solution</h3>
 
-```bash
-uv pip install .
-```
+**Goal:** 
+  Deliver the most relevant, timely, and trustworthy AI/ML news — with zero hallucinations.
 
-Run FastAPI:
+**Solution:** 
+  NewsPulse is a multi-agent analyst with:
 
-```bash
-uvicorn AI_Newsletter.main:app --reload
-```
+* Sequential + loop agent patterns
 
-Open:
-**[http://127.0.0.1:8000/](http://127.0.0.1:8000/)**
+* Self-evaluation / self-correction
 
-This UI uses:
+* Personalized planning
 
-* FastAPI
-* Jinja2 templates
-* SQLite for structured data
-* ChromaDB for vector search
+* Memory-enhanced learning
 
----
+* Fact verification
 
-# Refer to readme_setup_email_service.md for email sending service
----
+* Email delivery with feedback adaptation
 
-# Refer to readme_deployment_gcp.md for deploy the agent to GCP Cloud run
+**Value Proposition**
 
----
+✔ Personalized content
+✔ Fully citation-verified
+✔ AI-generated HTML newsletter
+✔ Learns from feedback
+✔ Low latency end-to-end
 
-# 🧠 Multi-Agent Flow (Core System Architecture)
+<h3 style="font-size:22px;"> 📈 4. Success Metrics</h3>
 
-This system uses a **multi-agent pipeline** with sequential, parallel, and loop patterns.
+**KPI	Target**
 
----
+* Relevance	≥80% match to user interests
+* Accuracy & Safety	100% citation-backed news
+* Latency	< 4 minutes total
+* Satisfaction	≥80% positive feedback
 
-## 1. **UserProfilerAgent**
+<h3 style="font-size:22px;"> 👤 5. User Stories</h3>
+
+**Marketing Director**: Wants daily competitor insights aligned with strategic focus.
+
+**CFO**: Wants clear, factual regulatory & financial summaries.
+
+**Developer**: Wants a personalized newsletter remembering their own keywords.
+
+<h3 style="font-size:22px;"> 🧠 6. Multi-Agent Architecture (Unified System)</h3> 
+
+The system uses sequential and loop agent patterns.
+
+Below merges both the PRD pipeline + your AI_Newsletter workflow.
+
+
+#### 1). **UserProfilerAgent**
 
 **Input:** user self-description + email + request
-**Function:**
 
-* LLM interprets interests, technical level, preferred tone (casual vs technical), preferred length, detailed request for a newsletter
-  **Output:** user profile JSON
+**Function:** LLM interprets interests, technical level, preferred tone (casual vs technical), preferred length, detailed request for a newsletter
+  
+**Output:** user profile JSON
 
 ---
 
-## 2. **HistoricalRecomenderAgent**
+#### 2). **HistoricalRecomenderAgent**
 
 Slightly modify the user's requests to prevent stagnation and introduce related, novel concepts for current search.
+
 **Output:** modified user profile JSON
 
 ---
 
-## 3. **PlannerAgent**
+#### 3). **PlannerAgent**
 
 **Input:** user profile + today’s date
+
 **Decides:**
 
 * which topics to search
@@ -123,26 +124,23 @@ Slightly modify the user's requests to prevent stagnation and introduce related,
 
 ---
 
-## 4. **GoogleSearchAgent**
-
-Uses tools such as:
-
-* Google Search Tool
+#### 4). **GoogleSearchAgent**
 
 **Function:**
 Fetch new articles 
 
-**Output:** title, url, summary, published_time, uuid
+**Output:** 
+title, url, summary, published_time, uuid
 
 ---
 
-## 5. **FetchAgent**
+#### 5). **FetchAgent**
 
 * Fetch web page based on url from search agent
 
 ---
 
-## 6. **SummarizationAgent**
+#### 6). **SummarizationAgent**
 
 For each article:
 
@@ -152,7 +150,7 @@ For each article:
 
 ---
 
-## 7. **WriterAgent**
+#### 7). **WriterAgent**
 
 **Input:** user profile + summarized content
 **Output:**
@@ -165,7 +163,7 @@ A fully drafted HTML newsletter:
 
 ---
 
-## 8. **VerificationAgent** 
+#### 8). **VerificationAgent** 
 
 Checks the draft by comparing the summary against the related full text web page for:
 
@@ -178,7 +176,7 @@ This forms a **loop agent** pattern.
 
 ---
 
-## 9. **DeliveryAgent**
+#### 9). **DeliveryAgent**
 
 Uses an email-sending API (OpenAPI tool) to send HTML newsletters.
 Logs:
@@ -189,7 +187,7 @@ Logs:
 
 ---
 
-## 10. **FeedbackAgent**
+#### 10). **FeedbackAgent**
 
 Parses user replies or click tracking:
 
@@ -200,50 +198,106 @@ This forms a **continuous improvement loop** driven by user behavior.
 
 ---
 
-# 🎓 How This Matches Course Key Concepts
+<h3 style="font-size:22px;"> 🏗️ 7. Architecture Diagram</h3>
+<img width="613" height="559" alt="image" src="https://github.com/user-attachments/assets/49bd7211-9fe5-4e98-91ac-906e8b82ada8" />
 
-## ✔ Multi-Agent System Types
 
-* **Sequential agents:** full pipeline from UserProfiler → Delivery
-* **Loop agent:** Writer ↔ Evaluation self-correction cycle
 
-## ✔ Tools
 
-* google_search_tool
-* crawler / RSS tool
-* email_sender_tool
-* feedback_parser_tool
+**ASCII Diagram** <br>
+<img width="532" height="240" alt="image" src="https://github.com/user-attachments/assets/3b3a397a-7108-4a73-8e9f-5f7a9209c853" />
 
-## ✔ Memory
 
-* Long-term: user profile
-* Memory bank: stored in SQLite + ChromaDB
+<h3 style="font-size:22px;">📁 8. Project Folder Structure </h3> 
 
-## ✔ Agent Evaluation
-
-* Online: LLM judge (VerificationAgent)
-* Offline: open-rate & click-through metrics
-
-## ✔ Agent-to-Agent Protocol (A2A)
-
-Structured JSON messages passed between agents:
-
-```json
-{
-  "type": "DailyPlanResult",
-  "topics": ["AI eval"],
-  "max_articles": 5,
-  "exclude_ids": ["123", "456"]
-}
+```
+AI_Newsletter_Project/
+├── .DS_Store
+├── .gitignore
+├── Dockerfile
+├── pyproject.toml
+├── requirements.txt
+├── readme.md
+├── readme_deployment_gcp.md
+├── readme_setup_email_service.md
+└── AI_Newsletter/
+    ├── __init__.py
+    ├── agent.py
+    ├── logger_config.py
+    ├── newsletter_agents.py
+    ├── prompt.py
+    ├── schema.py
+    ├── utility.py
+    └── vectors.py
 ```
 
----
+<h3 style="font-size:22px;">⚙️ 9. Installation & Setup </h3> 
+➡️ Using uv (recommended) <br>
 
-# 📦 One-Line Summary for Assignment Submission
+* Create virtual env
+uv venv --python 3.12 --seed
+source .venv/bin/activate
 
-> This project is a multi-agent personalized newsletter system using sequential, parallel, and loop agents, retrieval tools, long-term memory (SQLite + Chroma), daily planning, LLM-based evaluation, and structured A2A messaging to deliver customized AI/ML newsletters and adapt continuously from user feedback.
+* Install project
+uv pip install .
+
+<h3 style="font-size:22px;">🌐 10. Test in Google ADK Dev UI </h3>  
+
+* Add your API key to .env.
+
+* Run: uv run adk web
+
+* Open browser: http://localhost:8000
+
+  Select:
+
+✔ AI_Newsletter (root agent)
+✔ Run full agent workflow interactively
+
+<h3 style="font-size:22px;"> 🔥 11. Test With FastAPI UI </h3> 
+
+* Activate env: source .venv/bin/activate
+
+* Install (if not done): uv pip install .
+
+* Run FastAPI: uvicorn AI_Newsletter.main:app --reload
+
+* Open: ➡️ http://127.0.0.1:8000
 
 
-# Sample Verification Output 
-{"VerificationOutput": [{"sentence": "The latest AI advancements are democratizing coding through 'vibe coding' and enhancing developer experience with powerful models like Anthropic's Claude Opus 4.5, offering profound implications for healthcare insurance.", "uuid": "short_blurb", "accuracy_or_not": true, "modified_version": "The latest AI advancements are democratizing coding through 'vibe coding' and enhancing developer experience with powerful models like Anthropic's Claude Opus 4.5, offering profound implications for healthcare insurance.", "justification": "The statement accurately reflects the content from both provided references. The Times of India article discusses how 'vibe coding' democratizes tech for non-technical individuals, and the Anthropic article introduces Claude Opus 4.5 as an advanced AI model enhancing developer experience. The 'profound implications for healthcare insurance' is a valid synthesis of the information, especially considering the detailed business implications provided in the newsletter context, which were themselves verified."}]}
+<h3 style="font-size:22px;">  ✉️ 12. Deployment & Email Services </h3>
 
+Please find:
+
+* readme_setup_email_service.md
+
+* readme_deployment_gcp.md
+
+* Supports deployment to GCP Cloud Run.
+
+<h3 style="font-size:22px;"> 🧪 13. Sample Verification Agent Output </h3>
+
+{
+  "VerificationOutput": [
+    {
+      "sentence": "The latest AI advancements are democratizing coding...",
+      "uuid": "short_blurb",
+      "accuracy_or_not": true,
+      "modified_version": "The latest AI advancements...",
+      "justification": "Statement accurately reflects referenced content..."
+    }
+  ]
+}
+
+<h3 style="font-size:22px;">  🎓 14. How This Matches Multi-Agent System Concepts </h3>
+
+✔ Sequential agents <br>
+✔ Loop agent pattern (Writer ↔ Verifier)<br>
+✔ Tools (Search, Crawler, Email Sender, Feedback Parser)<br>
+✔ Long-term memory (SQLite + ChromaDB)<br>
+✔ LLM Judge (VerificationAgent)<br>
+✔ Structured A2A messaging <br>
+
+📦 One-line Summary for Coursework
+
+A fully personalized AI/ML newsletter generator using sequential, parallel, and loop agents, retrieval tools, long-term memory, structured A2A messaging, and LLM-based evaluation to generate, verify, and deliver daily intelligence briefs.
