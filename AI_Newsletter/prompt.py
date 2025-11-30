@@ -24,7 +24,7 @@ Your responsibility is to:
 3. All selected updates must be **within the date range from the detailed_request**, ensuring the newsletter only includes the most recent developments within the time span.
 4. If user provides any preferred sources in {profile}, please prioritize those in planning and in the final search topics list by including the search domain and date range in the topic.
 5. For each track, generate a list of search queries for google_search and URL-fetching tools (if available).
-6. The executive summary should include the general progress and breakthrough of AI/Gen AI over the time period. It should also include the related industry-specific news, progress and breakthroughes of AI / Gen AI. 
+6. The executive summary should include the general progress and breakthrough of AI/Gen AI over the time period. It should also include the related industry-specific news, progress and breakthroughes of AI / Gen AI. Please have separate topics for the general progress of AI/Gen AI and for the related industry news on AI/Gen AI.
 7. Please cap the maximum number of topics to 10. Select those most relevant to the user's detailed request; drop outdated or low-signal topics.
 
 OUTPUT FORMAT:

@@ -116,7 +116,6 @@ Task:
 2. Suggest 1-2 new, related topics that would introduce novelty but remain relevant.
 3. Combine these 1-2 new topics with the existing request/topics.
 4. Output ONLY the refined detailed request as a JSON object, keeping the original structure but with enriched topics/queries for the Planner Agent.
-5. Do NOT call the semantic_search_articles tool; only use its description to guide your suggestions.
 
 Return ONLY a JSON object that matches the structure of the detailed request:
 {{
@@ -146,47 +145,70 @@ planner_agent = LlmAgent(
 # 5. Executive Search Agent 
 # -----------------------------------------------------------
 
+# executive_search_agent = LlmAgent(
+#     name="executive_search_agent",
+#     model=MODEL,
+#     instruction=""" You have the below request from user: 
+#         {detailed_request}
+
+#         You are a search assistant, the first step of the executive summary agent.
+
+#         GOAL:
+#         For each topic below, perform a Google Search (using the google_search tool) to find up to **1** highly relevant result from the date range specified in the request**.
+
+#         HOW TO USE google_search:
+#         - When you call the `google_search` tool, always:
+#           - Use the topic string as the query.
+#           - Constrain results to the date range specified in the request (for example by using a
+#             recency / date filter such as `recency_days: 14` if the tool supports it,
+#             or by adding suitable time filters to the query like "past 14 days" if the user is interested in the last two weeks' update).
+#         - After you get search results, infer `publish_date` from the page
+#           (snippet or content), and **discard** any result beyond the date range of request.
+
+#         For each topic, return a JSON array where each item includes:
+#             - topic: the topic string (include the time window, e.g. "LLM safety updates (last 14 days)")
+#             - title: the title or snippet of the result  
+#             - url: the URL of the result  
+#             - publish_date: the publish date inferred from the page (ISO if possible)
+#             - uuid: unique identification for each result
+#             - short_summary: a short summary of the web page
+
+#         Here are the topics to search:
+#         {search_queries}
+
+#         OUTPUT RULES:
+#         - Make sure your output is **valid JSON only** (no extra commentary),
+#           and **only keep results within the last several days according to the request**.
+#         """,
+#     tools=[google_search],
+#     output_key="search_results_executive",
+#     after_model_callback=create_uuid_for_search_results,
+#     after_agent_callback=save_search_results,
+# )
+
 executive_search_agent = LlmAgent(
     name="executive_search_agent",
     model=MODEL,
     instruction=""" You have the below request from user: 
         {detailed_request}
-
-        You are a search assistant, the first step of the executive summary agent.
-
-        GOAL:
-        For each topic below, perform a Google Search (using the google_search tool) to find up to **1** highly relevant result from the date range specified in the request**.
-
-        HOW TO USE google_search:
-        - When you call the `google_search` tool, always:
-          - Use the topic string as the query.
-          - Constrain results to the date range specified in the request (for example by using a
-            recency / date filter such as `recency_days: 14` if the tool supports it,
-            or by adding suitable time filters to the query like "past 14 days" if the user is interested in the last two weeks' update).
-        - After you get search results, infer `publish_date` from the page
-          (snippet or content), and **discard** any result beyond the date range of request.
-
-        For each topic, return a JSON array where each item includes:
-            - topic: the topic string (include the time window, e.g. "LLM safety updates (last 14 days)")
+        You are a search assistant, the first step of the executive summary agent. For each topic below, perform a Google Search (using the google_search tool) 
+        to have up to **1** relevant search results. Then, return a JSON array where each item include:
+            - topic: the topic string (please do include the date range in the topic)
             - title: the title or snippet of the result  
             - url: the URL of the result  
-            - publish_date: the publish date inferred from the page (ISO if possible)
+            - publish_date: the publish date infurred from the page
             - uuid: unique identification for each result
-            - short_summary: a short summary of the web page
+            - short_summary: summary of the web page
 
         Here are the topics to search:
         {search_queries}
-
-        OUTPUT RULES:
-        - Make sure your output is **valid JSON only** (no extra commentary),
-          and **only keep results within the last several days according to the request**.
+        Make sure your output is **valid JSON only** (no extra commentary, only keep those within the date range of interest).
         """,
     tools=[google_search],
     output_key="search_results_executive",
     after_model_callback=create_uuid_for_search_results,
     after_agent_callback=save_search_results,
 )
-
 # -----------------------------------------------------------
 # 6. Executive Fetch Agent 
 # -----------------------------------------------------------
