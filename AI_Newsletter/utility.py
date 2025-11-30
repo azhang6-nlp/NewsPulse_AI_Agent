@@ -5,7 +5,6 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
-
 import requests
 from bs4 import BeautifulSoup, Comment
 import copy
@@ -13,8 +12,16 @@ from google.adk.agents.callback_context import CallbackContext
 
 import sqlite3
 
-from google.adk.models import LlmResponse  # correct for your ADK version
+from google.adk.models import LlmResponse
 
+import os
+import smtplib
+from pathlib import Path
+from datetime import datetime
+from email.message import EmailMessage
+import unicodedata
+
+logger = logging.getLogger(__name__)
 
 # ----------------------------
 #  HTML parsing / content utils
@@ -56,6 +63,10 @@ def safe_json_loads(text: str) -> Any:
 
 def save_state_after_agent_callback(callback_context: CallbackContext) -> None:
     """Persist the current state to a JSON (or TXT) file for debugging."""
+
+    if 'current_date' not in callback_context.state:
+        callback_context.state['current_date'] = str(datetime.utcnow().date())
+
     state_dict = callback_context.state.to_dict()
     print(f"[save_state_after_agent_callback] Current session state keys: {state_dict.keys()}")
 
@@ -362,7 +373,6 @@ def prepare_verify_pairs(callback_context: CallbackContext) -> None:
     news = callback_context.state.get("newsletter_result", {})
     pairs: List[Dict[str, Any]] = []
 
-# utility.py
 def prepare_verify_pairs(callback_context):
     state = callback_context.state
 
@@ -801,8 +811,6 @@ def init_db() -> None:
     conn.close()
     print("✅ SQLite initialized at:", DB_PATH)
 
-init_db()
-
 
 def get_db() -> sqlite3.Connection:
     return sqlite3.connect(DB_PATH)
@@ -1012,15 +1020,7 @@ def convert_newsletter_json_to_html(data: dict) -> str:
     </html>
     """
 
-import os
-import smtplib
-from pathlib import Path
-from datetime import datetime
-from email.message import EmailMessage
-import unicodedata
-import logging
 
-logger = logging.getLogger(__name__)
 
 def _sanitize_html_for_email(html: str) -> str:
     """

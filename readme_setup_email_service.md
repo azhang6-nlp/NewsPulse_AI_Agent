@@ -1,0 +1,130 @@
+# Follow the steps to create email service 
+Google blocks normal SMTP login for security.
+
+Here’s the clean, safe way to make your ADK newsletter send email through Gmail.
+
+---
+
+# ✅ Step 1 — Turn on 2-Step Verification (required by Google)
+
+Go to:
+
+[https://myaccount.google.com/security](https://myaccount.google.com/security)
+
+Enable:
+
+✔ **2-Step Verification**
+(You cannot create an app password without this.)
+
+---
+
+# ✅ Step 2 — Create a Gmail App Password
+
+Go to:
+
+[https://myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+
+Choose:
+
+* App: **Mail**
+* Device: **Other** → type something like `AI Newsletter`
+
+Click **Generate** → you get a **16-character password** like:
+
+```
+abcd efgh ijkl mnop
+```
+
+THIS is what you’ll use as `SMTP_PASS`.
+
+---
+
+# ✅ Step 3 — Put these in your `.env`
+
+In your project root (`newsletter-team/.env`):
+
+```env
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=yourgmail@gmail.com
+SMTP_PASS=your_app_password_here
+NEWSLETTER_FROM_EMAIL=yourgmail@gmail.com
+```
+
+---
+
+# DONE ✅ Step 4 — Use this working SMTP sender function
+
+Replace your `send_newsletter_email` in `agent.py` with this:
+
+```python
+import os
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+
+
+def send_newsletter_email(to_email: str, subject: str, html: str) -> dict:
+    """
+    Send HTML email via Gmail SMTP.
+    Requires:
+      SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, NEWSLETTER_FROM_EMAIL
+    """
+    host = os.getenv("SMTP_HOST")
+    port = int(os.getenv("SMTP_PORT", "587"))
+    user = os.getenv("SMTP_USER")
+    password = os.getenv("SMTP_PASS")
+    from_email = os.getenv("NEWSLETTER_FROM_EMAIL", user)
+
+    if not all([host, port, user, password, from_email]):
+        raise RuntimeError("SMTP config missing; check .env")
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = to_email
+
+    # Text fallback and HTML body
+    msg.attach(MIMEText("Your email client does not support HTML.", "plain"))
+    msg.attach(MIMEText(html, "html"))
+
+    with smtplib.SMTP(host, port) as server:
+        server.starttls()
+        server.login(user, password)     # IMPORTANT: use app password
+        server.sendmail(from_email, [to_email], msg.as_string())
+
+    return {"status": "sent", "message_id": "gmail-smtp"}
+```
+
+---
+
+# ✅ Step 5 — Restart ADK and send a test newsletter
+
+```bash
+adk web
+```
+
+Then in the UI:
+
+> I’m a DS, my email is **[yourgmail@gmail.com](mailto:yourgmail@gmail.com)**.
+> Generate today’s newsletter.
+
+Check your inbox (or spam). Gmail usually delivers instantly.
+
+---
+
+# ⚠️ Important Notes
+
+### ✔ Gmail App Passwords are safe
+
+* They work only for SMTP / IMAP
+* They can be revoked anytime
+* They don’t expose your real password
+
+### ✔ Do not use your *regular* Gmail password
+
+Google will block it and may lock your account temporarily.
+
+### ✔ For production
+
+Use SendGrid / Mailgun / SES — Gmail SMTP has rate limits (100–150/day).

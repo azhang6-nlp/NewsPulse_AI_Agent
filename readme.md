@@ -6,10 +6,11 @@ A multi-agent system that profiles users, retrieves fresh AI/ML news, summarizes
 
 AI_Newsletter/
   ├── __init__.py
-  ├── agent.py          # <- ADK entrypoint (defines root_agent)
-  ├── storage.py        # sqlite + chroma helpers
-  └── email_sender.py   # real email integration
-
+  ├── agent.py              # <- ADK entrypoint (defines root_agent)
+  ├── newsletter_agents.py  # define all the adk agents used by the root_agent (see below for more info)
+  └── utility.py            # user profile storage; real email integration; funtion tools;  other functions for state management
+  └── schema.py             # define output schemas for various agents
+  └── logger_config.py      # logging for sessions
 ---
 
 # 🚀 Installation (pyproject.toml)
@@ -89,28 +90,22 @@ This system uses a **multi-agent pipeline** with sequential, parallel, and loop 
 
 ## 1. **UserProfilerAgent**
 
-**Input:** user self-description + email
+**Input:** user self-description + email + request
 **Function:**
 
-* LLM interprets interests, technical level, preferred tone (casual vs technical), preferred length
+* LLM interprets interests, technical level, preferred tone (casual vs technical), preferred length, detailed request for a newsletter
   **Output:** user profile JSON
 
 ---
 
-## 2. **ProfileStorageAgent**
+## 2. **HistoricalRecomenderAgent**
 
-Stores long-term user profile + maintains:
-
-* `seen_article_ids` (avoid duplicates)
-* basic stats like open rate / click rate
-
-(Can be implemented as a tool or direct DB call.)
+Slightly modify the user's requests to prevent stagnation and introduce related, novel concepts for current search.
+**Output:** modified user profile JSON
 
 ---
 
-## 3. **DailyPlannerAgent**
-
-Runs daily (cron / scheduler).
+## 3. **PlannerAgent**
 
 **Input:** user profile + today’s date
 **Decides:**
@@ -118,40 +113,26 @@ Runs daily (cron / scheduler).
 * which topics to search
 * which sources to pull from
 * max number of articles
-
-**Output example:**
-
-```json
-{
-  "topics": ["LLM evaluation", "MLOps"],
-  "sources": ["google_news", "specific_blog"],
-  "max_articles": 5
-}
-```
+* newsletter outline
 
 ---
 
-## 4. **RetrieverAgent** (parallelizable)
+## 4. **GoogleSearchAgent**
 
 Uses tools such as:
 
 * Google Search Tool
-* Custom website crawler / RSS
 
 **Function:**
-Fetch new articles → filter out anything already in `seen_article_ids`
+Fetch new articles 
 
-**Output:** title, url, snippet, published_time
+**Output:** title, url, summary, published_time, uuid
 
 ---
 
-## 5. **IndexingAgent**
+## 5. **FetchAgent**
 
-* Saves new article vectors to ChromaDB
-* Updates `seen_article_ids`
-* Creates long-term searchable memory index
-
-(Exposed as a `save_article_index_tool`.)
+* Fetch web page based on url from search agent
 
 ---
 
@@ -161,6 +142,7 @@ For each article:
 
 * Extract key points
 * Condense technical content into the correct level for this user
+
 
 ---
 
@@ -177,14 +159,13 @@ A fully drafted HTML newsletter:
 
 ---
 
-## 8. **EvaluationAgent** (LLM self-correction loop)
+## 8. **VerificationAgent** 
 
-Checks the draft for:
+Checks the draft by comparing the summary against the related full text web page for:
 
 * Tone correctness
-* Length too long / too short
-* Quality of summaries
-* Readability
+* Accuracy of summaries
+* If inaccurate, modified version
 
 If bad → returns feedback + rewrite prompt → **WriterAgent rewrites → Evaluator re-checks**
 This forms a **loop agent** pattern.
@@ -206,7 +187,6 @@ Logs:
 
 Parses user replies or click tracking:
 
-* detects “too long”, “too basic”, “love this topic”, etc.
 * updates user profile preferences
 * updates interest weights
 
@@ -219,31 +199,23 @@ This forms a **continuous improvement loop** driven by user behavior.
 ## ✔ Multi-Agent System Types
 
 * **Sequential agents:** full pipeline from UserProfiler → Delivery
-* **Parallel agents:** RetrieverAgent hitting multiple sources concurrently
 * **Loop agent:** Writer ↔ Evaluation self-correction cycle
 
 ## ✔ Tools
 
 * google_search_tool
 * crawler / RSS tool
-* article_index_tool
 * email_sender_tool
 * feedback_parser_tool
 
 ## ✔ Memory
 
-* Long-term: user profile + seen_article_ids + click history
-* Context engineering: summarization of long histories
+* Long-term: user profile
 * Memory bank: stored in SQLite + ChromaDB
-
-## ✔ Long-running Operations
-
-* DailyPlannerAgent invoked via cron / workflow engine
-* Pause/resume when an API rate-limits or a crawler times out
 
 ## ✔ Agent Evaluation
 
-* Online: LLM judge (EvaluationAgent)
+* Online: LLM judge (VerificationAgent)
 * Offline: open-rate & click-through metrics
 
 ## ✔ Agent-to-Agent Protocol (A2A)

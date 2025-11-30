@@ -189,7 +189,7 @@ planner_agent = LlmAgent(
 executive_search_agent = LlmAgent(
     name="executive_search_agent",
     model=MODEL,
-    instruction=""" You have the below request from user: 
+    instruction="""Today is {current_date}. You have the below request from user: 
         {detailed_request}
         You are a search assistant, the first step of the executive summary agent. For each topic below, perform a Google Search (using the google_search tool) 
         to have up to **1** relevant search results. Then, return a JSON array where each item include:
@@ -217,6 +217,7 @@ executive_fetch_agent = LlmAgent(
     name="executive_fetch_agent",
     model=MODEL,
     instruction="""
+        Today is {current_date}
         You are a wetsite url fetch assistant. For each webpage below, perform a content fecth (using the fetch_page_details tool). 
         Then, return a JSON array where each item includes (can just return the results from tool call):
             - topic
@@ -247,6 +248,7 @@ executive_summary_agent = LlmAgent(
     name="executive_summary_agent",
     model=MODEL,
     instruction="""
+        Today is {current_date}
         {executive_summary_agent_prompt?}
         You are an AI research summarizer. You will get  a JSON list of objects below, 
         each containing a 'topic', 'title', 'final_url', 'uuid', and 'full_text' (the entire text of a webpage). 
@@ -350,6 +352,7 @@ newsletter_dispatcher = LlmAgent(
         "the tool of send_newsletter_email."
     ),
     instruction=(
+        "Today is {current_date}"
         "You MUST:\n"
         "1. Call send_newsletter_email exactly once. get the to_email from {email} \n"
         "3. Pass to_email, subject, and the newsletter json in {newsletter_updated}.\n"
