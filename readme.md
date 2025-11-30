@@ -11,7 +11,6 @@ AI_Newsletter/
   └── utility.py            # user profile storage; real email integration; funtion tools;  other functions for state management
   └── schema.py             # define output schemas for various agents
   └── logger_config.py      # logging for sessions
----
 
 # 🚀 Installation (pyproject.toml)
 
@@ -79,6 +78,13 @@ This UI uses:
 * Jinja2 templates
 * SQLite for structured data
 * ChromaDB for vector search
+
+---
+
+# Refer to readme_setup_email_service.md for email sending service
+---
+
+# Refer to readme_deployment_gcp.md for deploy the agent to GCP Cloud run
 
 ---
 
