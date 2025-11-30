@@ -298,6 +298,6 @@ Please find:
 ✔ LLM Judge (VerificationAgent)<br>
 ✔ Structured A2A messaging <br>
 
-📦 One-line Summary for Coursework
+### 📦 One-line Summary for Coursework
 
 A fully personalized AI/ML newsletter generator using sequential, parallel, and loop agents, retrieval tools, long-term memory, structured A2A messaging, and LLM-based evaluation to generate, verify, and deliver daily intelligence briefs.
