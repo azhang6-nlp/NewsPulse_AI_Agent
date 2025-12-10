@@ -20,6 +20,11 @@ from .newsletter_agents import (
     newsletter_dispatcher
 )
 
+from .utility import init_db
+
+# --- 0. Initialize the database for profiles
+init_db()
+
 # --- 1. Planning Pipeline (Updated) ---
 # Goal: Load profile, refine topics, and create the plan.
 planning_pipeline = SequentialAgent(
