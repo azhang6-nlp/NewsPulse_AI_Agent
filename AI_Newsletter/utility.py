@@ -362,17 +362,6 @@ def writer_before_agent_callback(callback_context):
     else:
         raise RuntimeError("Pipeline paused: executive summary is still pending!")
 
-
-
-def prepare_verify_pairs(callback_context: CallbackContext) -> None:
-    """Build (sentence, reference, uuid) pairs for verification."""
-    fetch_results_raw = callback_context.state.get("fetch_results_executive", "")
-    fetch_results = safe_json_loads(fetch_results_raw)
-    fetch_by_uuid = {item["uuid"]: item for item in fetch_results}
-
-    news = callback_context.state.get("newsletter_result", {})
-    pairs: List[Dict[str, Any]] = []
-
 def prepare_verify_pairs(callback_context):
     state = callback_context.state
 
